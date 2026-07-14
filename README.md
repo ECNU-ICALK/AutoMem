@@ -153,7 +153,7 @@ If you use AutoMem in academic work, technical reports, or demos, please cite:
   note = {GitHub repository}
 }
 
-@misc{yang2026automem,
+@misc{du2026automem,
   title={AutoMem: A Text-Gradient Recursive Self-Improvement Framework for Automated Memory Architectures Search},
   author={Lin Du and Jie Zhou and Yuxuan Cai and Kai Chen and Qin Chen and Xin Li and Bo Zhang and Wei Li and Liang He},
   year={2026},
