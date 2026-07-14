@@ -141,3 +141,23 @@ Citation metadata is in [CITATION.cff](CITATION.cff). AutoMem is licensed under
 Apache-2.0; modified third-party runtime source retains its file-level headers
 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Questions and issues are
 welcome on the GitHub issue tracker.
+
+If you use AutoMem in academic work, technical reports, or demos, please cite:
+
+```bibtex
+@software{autosmem_2026,
+  author = {Lin Du, Jie Zhou, Yuxuan Cai, Kai Chen, Qin Chen, Xin Li, Bo Zhang, Wei Li, Liang He},
+  title = {AutoMem: A Text-Gradient Recursive Self-Improvement Framework for Automated Memory Architectures Search},
+  year = {2026},
+  url = {https://github.com/ECNU-ICALK/AutoMem},
+  note = {GitHub repository}
+}
+
+@misc{yang2026automem,
+  title={AutoMem: A Text-Gradient Recursive Self-Improvement Framework for Automated Memory Architectures Search},
+  author={Lin Du and Jie Zhou and Yuxuan Cai and Kai Chen and Qin Chen and Xin Li and Bo Zhang and Wei Li and Liang He},
+  year={2026},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI}
+}
+```
