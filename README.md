@@ -1,64 +1,113 @@
-# AutoMem
+<div align="center">
+  <img src="assets/framework.png" alt="AutoMem framework: EGAS (Experience-Guided Architecture Search) and FGMD (Failure-Guided Module Diagnosis)" width="900">
+  <h1 align="center">AutoMem: Text-Gradient Evolution of LLM-Agent Memory Architectures</h1>
+</div>
 
-English | [简体中文](README_CN.md)
+<p align="center">
+  English | <a href="README_CN.md">简体中文</a>
+</p>
 
-AutoMem is a research framework for task-adaptive long-term memory in LLM
-agents. It searches one explicit memory architecture with four coordinates:
-**Encode**, **Store**, **Retrieve**, and **Manage**. The repository includes the
-architecture model, storage and retrieval implementations, management pipelines,
-the fixed memory-use runtime, the search loop, and benchmark runners. It does not
-vendor baseline repositories, benchmark datasets, model weights, or result
-artifacts.
+## Introduction
 
-The architecture contract matches the paper: Encode selects a non-empty subset
-of the five extraction types (multi-Encode routes such as
-`tip+trajectory+workflow` are first-class), while Store, Retrieve, and Manage
-each select one value. This repository is still not a standalone numerical
-reproduction package — datasets, credentials, and result artifacts are
-intentionally excluded. See [Reproduction](docs/reproduction.md) before
-comparing results.
+Long-term memory design for LLM agents is a coupled architecture problem: what to
+**Encode**, how to **Store** it, how to **Retrieve** it, and how to **Manage** it
+interact, and the best combination changes with the task distribution. AutoMem
+turns this into a search problem over an explicit, factored architecture space and
+solves it with a text-gradient recursive self-improvement loop built from two
+components (see the figure above):
 
-## Public Architecture Space
+- **EGAS — Experience-Guided Architecture Search.** A proposer LLM generates
+  candidate architectures each round, conditioned on the Pareto front, an
+  observation graph of past rollouts, and an experience ledger of validated
+  principles and dead ends. Textual gradients (bottleneck → evidence → action)
+  steer the next proposal instead of blind mutation.
+- **FGMD — Failure-Guided Module Diagnosis.** Each candidate's failed rollouts
+  pass a scope filter (tool errors, timeouts, and judge ambiguity are excluded)
+  and the remaining memory-related failures are attributed to specific modules
+  (`extraction_gap`, `retrieval_miss_topk`, `retrieval_noise`, `memory_stale`, …),
+  producing targeted feedback for the next round.
 
-The sole public space is `automem-esrm-v1`:
+Every architecture runs under a fixed, code-defined memory-use runtime
+(`automem-runtime-v1`: one context-composition call with cited guidance, a
+BEGIN-plus-one-refresh lifecycle, and literal-preserving query planning), so
+search never rewards hidden execution-policy changes. See
+[docs/architecture.md](docs/architecture.md).
+
+## Architecture Space
+
+The public space `automem-esrm-v1` — 31 × 5 × 6 × 4 = 3720 combinations before
+compatibility validation, of which 2573 are valid:
 
 | Coordinate | Options |
 | --- | --- |
-| Encode (non-empty subset of 5 → 31 selections) | `tip`, `insight`, `trajectory`, `workflow`, `shortcut` |
+| Encode — non-empty subset (31) | `tip`, `insight`, `trajectory`, `workflow`, `shortcut` |
 | Store (5) | `json`, `vector`, `hybrid`, `graph`, `llm_graph` |
 | Retrieve (6) | `hybrid`, `contrastive`, `cbr_rerank`, `graph`, `hyde`, `mmr` |
 | Manage (4) | `lightweight`, `json_full`, `tool_manager`, `graph_consolidate` |
 
-This is a 3720-point space before compatibility validation (31 encode subsets x
-5 x 6 x 4). Every selected encode type is persisted to the one selected store.
-Graph retrieval requires `graph` or `llm_graph` storage. `graph_consolidate`
-combines graph content consolidation with success-aware edge adaptation and
-therefore requires graph-family storage together with the `graph` retriever.
-The current validator accepts 2573 combinations.
+Every selected encode type is persisted to the one selected store. `graph`
+retrieval requires a graph-family store; `graph_consolidate` additionally
+requires the `graph` retriever. Multi-encode routes such as
+`tip+trajectory+workflow` are first-class (see
+[configs/example.architecture.json](configs/example.architecture.json)).
 
-An `ArchitectureSpec` selects a non-empty subset for Encode (a single string is
-accepted as shorthand for a one-type subset) and exactly one value for each of
-the other coordinates. Missing, unknown, duplicate, and incompatible values are
-rejected. Execution behavior is not a fifth search coordinate.
+## 🚀 Quick Start
 
-## Fixed Runtime
+### 1. Install
 
-Every architecture runs under the code-defined `automem-runtime-v1` policy:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev,benchmarks]"
+```
 
-- **G2 context composition:** retrieved candidates go through one relevance and
-  composition call that produces tentative, cited guidance. If the model is
-  unavailable or its output is unusable, the top retrieved item is used as the
-  offline fallback.
-- **G3 refresh lifecycle:** memory is considered at task `BEGIN`, followed by at
-  most one explicitly requested refresh at a summary or replan boundary. Ordinary
-  intermediate steps cannot refresh memory.
-- **G4 query planning:** the literal task query is always preserved. An abstract
-  query may supplement the semantic representation, but never replaces the literal
-  query.
+### 2. Verify offline (no API keys needed)
 
-These behaviors and their limits are implemented in `src/automem/runtime/`. They
-are deliberately absent from `ArchitectureSpec`, configuration files, environment
-variables, and search proposals.
+```bash
+automem space          # print the public space and compatibility counts
+automem smoke          # offline architecture / storage / retrieval / runtime checks
+pytest -m "not online" # full offline test suite
+```
+
+### 3. Run a synthetic evolution round (offline, no cost)
+
+```bash
+python -m automem.search.engine \
+  --run_name evolution-smoke --output_dir "$(mktemp -d)" \
+  --infile examples/smoke_tasks.jsonl \
+  --max_rounds 2 --num_candidates 3 \
+  --warmup_n 1 --search_n 4 --batch_size 2 --validation_n 1 --test_n 1 \
+  --dry_run --no_ledger
+```
+
+### 4. Run a real architecture search (needs credentials + dataset)
+
+Copy `.env.example` to `.env` and fill in the service credentials you use
+(`OPENAI_API_KEY`/`OPENAI_API_BASE`, `SERPER_API_KEY`, …). Obtain benchmark data
+from its official source, then:
+
+```bash
+python -m automem.search.engine \
+  --run_name gaia-search --output_dir runs/search \
+  --infile data/gaia/metadata.jsonl --benchmark GAIA \
+  --model TASK_MODEL --search_model SEARCH_MODEL \
+  --judge_model JUDGE_MODEL --diagnosis_model DIAGNOSIS_MODEL \
+  --max_rounds 8 --num_candidates 3 \
+  --warmup_n 19 --search_n 100 --batch_size 50 --validation_n 30 --test_n 15 \
+  --final_validation
+```
+
+`--benchmark` also accepts `WebWalkerQA` and `xBench-DeepSearch`. A single
+benchmark run without search is available through each runner, e.g.:
+
+```bash
+python -m automem.benchmarks.gaia.runner \
+  --infile data/gaia/metadata.jsonl --model TASK_MODEL --judge_model JUDGE_MODEL \
+  --memory_provider modular --enable_memory_evolution
+```
+
+See [docs/reproduction.md](docs/reproduction.md) for dataset field contracts and
+per-benchmark defaults.
 
 ## Repository Layout
 
@@ -68,65 +117,27 @@ src/automem/providers/      Memory extraction and provider lifecycle
 src/automem/storage/        JSON, vector, hybrid, and graph-family stores
 src/automem/retrieval/      Retrieval implementations
 src/automem/management/     Lifecycle operations and four public presets
-src/automem/runtime/        Fixed G2/G3/G4 execution policy
-src/automem/search/         Architecture search, diagnosis, and selection
-src/automem/evaluation/     Offline aggregation and benchmark utilities
-src/automem/benchmarks/     GAIA, WebWalkerQA, and xBench runner modules
+src/automem/runtime/        Fixed memory-use execution policy
+src/automem/search/         EGAS/FGMD search loop, diagnosis, selection
+src/automem/benchmarks/     GAIA, WebWalkerQA, and xBench-DeepSearch runners
 src/automem/prompts/        Installed prompt resources
 src/flashoagents/           Modified agent runtime used by benchmark runners
 tests/                      Offline unit, integration, and smoke tests
-docs/                       Architecture, configuration, reproduction guides
-configs/                    Policy for version-controlled architecture inputs
-examples/                   Synthetic inputs for offline control-flow smoke tests
 ```
 
-Runtime data belongs in ignored directories such as `data/`, `runs/`, `storage/`,
-or an external artifact store.
-
-A strict, ready-to-validate input is provided at
-[`configs/example.architecture.json`](configs/example.architecture.json).
-
-## Install And Check
-
-AutoMem requires Python 3.10 or newer. The default checks are offline and require
-no API credentials:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev,benchmarks]"
-
-automem space
-automem smoke
-pytest -m "not online"
-```
-
-The `benchmarks` group installs the vector, web, and document/media dependencies
-needed to execute the three benchmark runners and their offline tests. The lighter `web`
-group covers web service adapters, while `vector` enables vector backends for
-library-only use:
-
-```bash
-python -m pip install -e ".[benchmarks]"
-```
-
-See [Reproduction](docs/reproduction.md) for the implemented runner and search
-inspection commands. Online runs require separately obtained datasets, service
-credentials, and an explicit review of cost and data handling.
+The repository ships source, prompts, and offline tests only — no datasets,
+credentials, baselines, or result artifacts.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
-- [Example architecture](configs/example.architecture.json)
-- [Reproduction](docs/reproduction.md)
-- [复现说明（中文）](docs/reproduction_CN.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
+- [Architecture](docs/architecture.md) — space, constraints, fixed runtime
+- [Configuration](docs/configuration.md) — the `ArchitectureSpec` contract
+- [Reproduction](docs/reproduction.md) — run commands and dataset contracts
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-## Citation And License
+## Citation and License
 
-Software citation metadata is in [CITATION.cff](CITATION.cff). AutoMem is licensed
-under Apache License 2.0. Modified third-party source retains its file-level
-headers; provenance limitations are recorded in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Citation metadata is in [CITATION.cff](CITATION.cff). AutoMem is licensed under
+Apache-2.0; modified third-party runtime source retains its file-level headers
+(see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Questions and issues are
+welcome on the GitHub issue tracker.

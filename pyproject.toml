@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "automem-search"
 version = "0.1.0"
-description = "Task-adaptive memory architecture search for LLM agents"
+description = "Text-gradient evolution of LLM-agent memory architectures"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use AutoMem, please cite the software using this metadata."
-title: "AutoMem"
+title: "AutoMem: Text-Gradient Evolution of LLM-Agent Memory Architectures"
 type: software
 version: 0.1.0
 license: Apache-2.0
@@ -11,5 +11,6 @@ repository-code: "https://github.com/ECNU-ICALK/AutoMem"
 keywords:
   - LLM agents
   - long-term memory
-  - architecture search
+  - memory architecture search
+  - text-gradient evolution
 
