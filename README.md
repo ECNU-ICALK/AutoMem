@@ -40,7 +40,7 @@ compatibility validation, of which 2573 are valid:
 
 | Coordinate | Options |
 | --- | --- |
-| Encode — non-empty subset (31) | `tip`, `insight`, `trajectory`, `workflow`, `shortcut` |
+| Encode (5) | `tip`, `insight`, `trajectory`, `workflow`, `shortcut` |
 | Store (5) | `json`, `vector`, `hybrid`, `graph`, `llm_graph` |
 | Retrieve (6) | `hybrid`, `contrastive`, `cbr_rerank`, `graph`, `hyde`, `mmr` |
 | Manage (4) | `lightweight`, `json_full`, `tool_manager`, `graph_consolidate` |
