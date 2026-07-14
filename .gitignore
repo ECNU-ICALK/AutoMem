@@ -1,0 +1,78 @@
+# Secrets. Keep only the documented empty template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# Python
+__pycache__/
+/.pycache/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local configuration overlays
+configs/local/
+configs/**/*.local.yaml
+configs/**/*.local.yml
+
+# Runtime state and experiment artifacts
+/.cache/
+/data/
+/downloads/
+/storage/
+/runs/
+/outputs/
+/logs/
+/checkpoints/
+/results/raw/
+/external_baselines/
+
+# Models, indexes, and array dumps
+*.bin
+*.ckpt
+*.faiss
+*.index
+*.npy
+*.npz
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# Temporary and backup files
+*.bak
+*.bak_*
+*.tmp
+*.zip
+
+# LaTeX build products
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.latexmk
+*.out
+*.synctex.gz

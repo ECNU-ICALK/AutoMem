@@ -1,0 +1,145 @@
+# Failure Forensics Extractor (v2 / library-aligned)
+
+## 1. Role
+Diagnose ONE class of failure from a failed agentic task. Output a reusable
+lesson (failure pattern + trigger + fix), NOT a post-mortem of this task.
+
+You do not propose future improvements beyond the `fix` field. You do not
+explain why the correct answer is correct.
+
+## 2. Input Context
+- Task Query: {{ task_query }}
+- Success Flag: {{ is_success }}
+- Task complexity: {{ task_complexity }}              {# simple | medium | complex | unknown #}
+- Task File Types: {{ task_files }}         {# e.g. ["file_xlsx"], ["file_pdf"], or [] #}
+- Raw Trajectory Log: {{ raw_trajectory }}
+- Final Result (wrong): {{ final_result }}
+- Failure Reason (optional): {{ failure_reason | default("None", true) }}
+
+## 3. Complexity / File Hints (Soft)
+- simple-task failures usually involve format / unit / scope errors.
+- medium-task failures often involve disambiguation or incomplete search.
+- complex-task failures often involve hallucination, logic_error, or timeout.
+- When `task_files` is non-empty, prefer `file_parse_error` or
+  `multimodal_failure` if either fits.
+
+---
+
+## 4. Extraction Rules (applies when `is_success` is false; if true, jump to §5 and emit the skipped object)
+
+### 4.1 Required Fields (5 total)
+
+Output a JSON object with exactly these 5 required keys:
+
+**(a) `failure_pattern`** — pick ONE label from this controlled vocabulary:
+
+| Label                   | When it fits                                                       |
+|-------------------------|--------------------------------------------------------------------|
+| `wrong_entity`          | Answered with the wrong named entity                               |
+| `wrong_value`           | Right entity, wrong number / date / quantity                       |
+| `format_error`          | Right value, wrong format (unit / precision / casing)              |
+| `incomplete_search`     | Stopped before exhausting available sources                        |
+| `tool_misuse`           | Wrong tool or wrong arguments                                      |
+| `logic_error`           | Reasoning flaw despite correct information                         |
+| `hallucination`         | Stated facts not in any retrieved source                           |
+| `timeout`               | Ran out of steps / budget                                          |
+| `scope_error`           | Answered a different question than asked                           |
+| `disambiguation_error`  | Retrieved info about a similarly-named entity                      |
+| `file_parse_error`      | Could not read attached file (xlsx / pdf / etc.)                   |
+| `multimodal_failure`    | Misread image / audio / visual symbol                              |
+
+(If none clearly fits, pick the closest from the list — do NOT invent new labels.)
+
+**(b) `root_cause_conclusion`** — ONE sentence describing a GENERAL failure
+mode that a different agent on a different task could also make.
+
+- DO: name a generic failure mechanism. Example: "The agent committed to a
+  single candidate source without cross-checking against an authoritative
+  index, so an early disambiguation error propagated unnoticed."
+- DO NOT: mention specific entity names, numeric values, URLs, dates, or
+  the golden answer.
+
+**(c) `corrective_strategy`** — ONE imperative sentence (≤ 35 words)
+naming a concrete MECHANISM the next agent should apply.
+
+- DO: name a tool call, error-code handler, format / unit check, or
+  cross-source comparison. Example: "Before final_answer on a numeric
+  value, compare the unit found in the source against the unit the
+  question asked for; reject mismatched scale factors."
+- DO NOT: write platitudes ("double-check the answer"), generic advice
+  ("use a better search strategy"), or task-family-specific instructions
+  ("re-read the Orbital-characteristics row").
+
+**(d) `detection_signal`** — ONE short sentence (≤ 20 words) describing
+the observation the agent could have noticed to catch this mistake.
+Example: "Search returned two entities sharing the same surname" or
+"Crawl returned HTTP 403 paywall".
+
+**(e) `task_type_tags`** — list of 2-4 string tags drawn from:
+`geographic_spatial`, `numeric_computation`, `text_extraction`,
+`date_time`, `lookup_factual`, `code_execution`, `data_table`,
+`multimedia_analysis`, `web_search`, `scientific_technical`,
+`legal_regulatory`, `literary_artistic`, `sports_statistics`,
+`format_conversion`, `multi_step_reasoning`, `citation_verification`,
+`paywall_navigation`, `cross_source_verification`, `exact_answer_matching`,
+`entity_disambiguation`, `file_xlsx`, `file_pdf`, `file_image`,
+`file_audio`, `file_video`, `file_code`, `simple`, `medium`, `complex`.
+
+Always include the matching `file_*` tag if `task_files` is non-empty.
+Always include the matching complexity tag (`simple`/`medium`/`complex`) when `task_complexity` is known.
+
+### 4.2 Optional Fields
+
+These 4 fields are OPTIONAL — emit them only if you have something
+genuinely useful to say. Set to `null` (or omit) otherwise; the parser
+handles missing keys gracefully.
+
+| Key | Purpose | Constraint |
+|---|---|---|
+| `state_mismatch_analysis` | Category-level summary of expected vs actual | Format: `"Expected: <TYPE>; Actual: <TYPE>"`. No literal values. |
+| `applicability` | When this insight applies | One observable trigger condition, ≤ 25 words |
+| `use_when` | List of 1-3 short observable triggers | Each ≤ 15 words |
+| `avoid_when` | List of 0-2 short anti-triggers | Each ≤ 15 words |
+| `leakage_risk` | Risk that this insight only works because it leaks ground truth | `"low"` / `"medium"` / `"high"`. Default low. Use "high" only if the insight couldn't be inferred without knowing this task's golden answer. |
+
+### 4.3 Content Rules (Soft — failures of these downgrade utility but do not reject the unit)
+
+- **Avoid leaking the answer**: do not write the literal value /
+  entity / URL / date the question is asking for.
+- **Avoid task fingerprinting**: do not name unique table / sheet /
+  section labels that only one specific task would have. Generic structural
+  labels ("References section", "infobox") are fine.
+- **Prefer category-level references**: "primary-source encyclopedia
+  infobox", "academic abstract", "government registry" are better than
+  "Wikipedia's Orbital characteristics row".
+- Common platforms (Wikipedia, arXiv, IMDb, PubMed, GitHub) are OK if
+  the platform identity is essential to the tool choice.
+
+---
+
+## 5. Output Schema (JSON, strict)
+
+Output strictly valid JSON. No trailing commas. No comments. No
+Markdown fences around the JSON.
+
+```json
+{% if not is_success %}
+{
+  "failure_pattern": "<one of the 12 labels in §4.1.a>",
+  "root_cause_conclusion": "<one sentence — general failure mechanism>",
+  "corrective_strategy": "<one imperative sentence, ≤ 35 words, names a concrete mechanism>",
+  "detection_signal": "<one short sentence, ≤ 20 words>",
+  "task_type_tags": ["<2-4 tags from §4.1.e>"],
+  "state_mismatch_analysis": "<optional: 'Expected: ...; Actual: ...' or null>",
+  "applicability": "<optional trigger condition or null>",
+  "use_when": ["<optional list of triggers or null>"],
+  "avoid_when": ["<optional list of anti-triggers or null>"],
+  "leakage_risk": "<optional: low | medium | high; defaults to low if omitted>"
+}
+{% else %}
+{
+  "skipped": true,
+  "skipped_reason": "is_success is true; diagnostics is failure-only."
+}
+{% endif %}
+```

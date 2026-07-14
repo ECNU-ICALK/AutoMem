@@ -1,0 +1,375 @@
+# AutoMem Architecture Search — Round {{ round_id }} / {{ max_rounds }}
+
+You are an expert memory-system architect for LLM agents.
+
+**Goal**: Across {{ max_rounds }} rounds of evolution, find the memory architecture
+that maximizes task-accuracy lift over the no-memory baseline on the {{ benchmark_name }} benchmark. Each round
+you propose {{ num_candidates }} candidate architectures; their outcomes feed back
+to you as the §2F experience ledger. The search is multi-objective
+(accuracy, hit_rate, token efficiency), and diversity across your candidates
+matters as much as quality of any one — the best architecture may sit in a region
+the current Pareto front hasn't probed yet.
+
+---
+
+## 1. Search Space (4 layers)
+
+An architecture is a 4-tuple: `extract_types` × `storage_routing` × `retrieval`
+× `management`. Each layer below lists the allowed options; nothing outside
+these tables is valid.
+
+### 1A. extract_types — which memory representations to extract (pick a non-empty subset)
+
+| Type       | Fires on      | What it captures                                            |
+|------------|---------------|-------------------------------------------------------------|
+| tip        | any task      | Domain-agnostic cognitive heuristics (how-to-think rules)   |
+| trajectory | any task      | Compressed action→observation fact chains (what happened)   |
+| workflow   | success only  | Reusable orchestration logic (sequencing + tool scheduling) |
+| shortcut   | any task      | Executable macro actions with parameterized placeholders    |
+| insight    | failure only  | Root-cause failure analysis + failure knowledge graph       |
+
+`workflow` is auto-gated to successful tasks; `insight` to failures. Select a
+non-empty subset of 1 to 5 unique types for each architecture — e.g.
+`["tip", "trajectory", "workflow"]` combines heuristics, episodes, and
+orchestration logic. Larger subsets capture more knowledge per task but raise
+extraction cost and pool noise; let the diagnosis evidence justify each added type.
+
+### 1B. storage_routing — where the selected extract types are persisted
+
+Choose exactly one backend and route EVERY selected type to it (one common
+store per architecture; mixed backends are outside this search space):
+
+| Backend   | Cold-start threshold | Mechanism                                                 |
+|-----------|----------------------|-----------------------------------------------------------|
+| json      | 5 units              | Exact key lookup                                          |
+| vector    | 20 units             | FAISS semantic similarity                                 |
+| hybrid    | 15 units             | json + vector union (returns exact AND semantic matches)  |
+| graph     | 30 units             | NetworkX entity-relation graph (N-hop traversal)          |
+| llm_graph | 50 units             | LLM-constructed knowledge graph; highest fidelity & cost  |
+
+Before choosing a backend, check §2A pool_stats. If your per-type unit count is
+below a backend's threshold, retrieval on that backend will return empty until
+the pool grows.
+
+### 1C. retrieval — how memories are fetched at query time (pick one)
+
+| Strategy     | Requires graph storage | Mechanism                                            |
+|--------------|------------------------|------------------------------------------------------|
+| hybrid       | No                     | Semantic embedding + lexical union                   |
+| contrastive  | No                     | Per-unit scoring via positive vs negative cohorts    |
+| cbr_rerank   | No                     | Case-based candidate pool + LLM rerank               |
+| graph        | YES                    | Entity-relation graph traversal (multi-hop)          |
+| hyde         | No                     | LLM-hypothesized answer passage + averaged-embedding dense retrieval (Gao et al. 2022). Strong on long-tail / complex-task reasoning where the literal query is short. Adds 1 LLM call per query. |
+| mmr          | No                     | Dense recall + Maximal-Marginal-Relevance diversity re-rank (Carbonell & Goldstein 1998). 0 extra LLM calls. Best when the pool has many near-duplicates. |
+
+### 1D. management — memory-lifecycle preset (pick one)
+
+Every preset is automatically wrapped with the 8 mandatory ops (see §1E). The
+preset below selects the *additional* experimental ops on top.
+
+| Preset          | Additional ops                                                                                          | Storage requirement |
+|-----------------|---------------------------------------------------------------------------------------------------------|---------------------|
+| lightweight     | time_decay + score_based_prune                                                                          | any                  |
+| json_full       | cluster_merge + reflection_correction + cross_type_dedup + trajectory_to_workflow + reindex_relations   | any                  |
+| tool_manager    | shortcut_promotion (post-task) + shortcut_validation (on-insert); best when the selected extract type is `shortcut` | any              |
+| graph_consolidate | graph content consolidation + cross-task generalization + success-aware edge adaptation; excludes shortcut ops | graph or llm_graph storage + graph retrieval |
+
+(Op semantics → §1F glossary.)
+
+### 1E. Mandatory layer (always-on, not selectable)
+
+Every architecture automatically includes these 8 ops regardless of preset:
+LLM Judge (post-retrieval relevance filter), signature_dedup, conflict_detection,
+quality_curation, utility_audit, access_stats_update, boost_on_success,
+penalize_on_failure. Do NOT include these in your output — they are guaranteed.
+A "lightweight" preset still gets all 8.
+
+### 1F. Op glossary (reference; you do NOT select these directly)
+
+| Op                       | What it does                                                                                       |
+|--------------------------|----------------------------------------------------------------------------------------------------|
+| `time_decay`             | Down-weights memory scores by age                                                                  |
+| `score_based_prune`      | Caps the pool size by keeping only top-K by score                                                  |
+| `cluster_merge`          | Hierarchically clusters similar memories; replaces each cluster with its centroid                  |
+| `reflection_correction`  | Detects contradicting pairs; LLM picks which one wins                                             |
+| `cross_type_dedup`       | Prevents the same fact stored as multiple types (e.g. both tip AND trajectory)                     |
+| `trajectory_to_workflow` | Promotes recurring successful trajectories into reusable workflow units                            |
+| `reindex_relations`      | Rebuilds graph indices after bulk inserts / deletions                                              |
+| `cross_task_generalize`  | Detects patterns recurring across distinct tasks, lifts them into abstract reusable memory         |
+| `shortcut_promotion`     | Boosts retrieval priority of shortcuts that were used in successful tasks                          |
+| `shortcut_validation`    | Validates a shortcut still produces correct output before persisting on insert                     |
+
+---
+
+## 2. Current state
+
+### 2A. Canonical memory pool
+```json
+{{ pool_stats_json }}
+```
+
+### 2B. No-memory baseline
+```json
+{{ baseline_stats_json }}
+```
+Task buckets: `easy` (solved without memory — focus elsewhere), `memory_sensitive`
+(failed without memory — your target), `hard` (failed even with memory — likely
+reasoning limit). Focus improvements on the `memory_sensitive` bucket.
+
+### 2C. Current Pareto front (top {{ pareto_top_k }} non-dominated)
+```json
+{{ pareto_front_json }}
+```
+**Front objectives** (the only two that determine domination):
+1. `accuracy` — primary, your main target.
+2. `memory_lift` (= acc − baseline) — secondary, confirms lift over no-memory.
+
+`hit_rate` and `token_eff` are reported for context but **do NOT** decide who
+enters/leaves the front. A high-hit_rate / low-accuracy candidate will be
+dominated if a lower-hit but higher-acc candidate exists. Optimize accuracy
+first; treat hit_rate as a diagnostic, not an objective.
+
+### 2D. Recent evaluations (last {{ history_len }})
+```json
+{{ history_table_json }}
+```
+
+### 2E. Round Context — READ IN ORDER (Smart-11, 2026-05-17)
+
+The full last-round structured data is below in §2F for reference, but **read
+this section in order first**. Sections are arranged by signal priority:
+**§2E.1 (synthesized verdicts) → §2E.2 (round-level verdict) → §2E.3
+(supporting detail) → §2E.4 (cross-round) → §2E.5 (raw)**. Skip §2E.5
+unless you need to verify raw counts.
+
+#### §2E.1 Per-candidate Synthesized Verdicts ← START HERE
+
+`gpt-5.5` has already synthesized 6 diagnostic signals (rule_diagnosis,
+LLM 4-layer diagnosis, memory_compliance, breakdown, evidence tasks, historical
+trend) into a single natural-language verdict per candidate. Conflicts between
+signals have been pre-resolved. **Trust this section** as the primary signal
+unless you find specific contradicting evidence in §2E.3.
+
+```json
+{{ synthesized_verdicts_json }}
+```
+
+Key fields per candidate:
+- `primary_signal` — natural-language summary of the dominant finding.
+- `confidence` — `high` / `medium` / `low`. Low ⇒ check §2E.3 supporting detail.
+- `recommended_action` — concrete architecture-space delta OR "skip memory
+  mutation" directive. **Execute this if confidence ≥ medium.**
+- `memory_bypass` — `TRUE` means agent ignores retrieved memory instructions;
+  do NOT mutate retrieval/storage/management; propose `explore_*` candidates only.
+- `out_of_scope_for_memory` — `TRUE` means primary failure mode is non-memory
+  (reasoning, judge format, time-range, multimodal, …); propose diverse
+  architectures rather than chasing this candidate's failure mode via memory.
+- `evidence_task_ids` — specific tasks the LLM diagnosis cited (you can quote
+  these in your candidate `rationale`).
+- `cross_source_agreement` — whether rule + LLM agreed about the bottleneck.
+
+#### §2E.2 Round-level Verdict (Smart-9b)
+
+`gpt-5.5` has also synthesized all candidates + the differential diagnosis +
+the current Pareto trajectory into a round-level verdict. Use this for
+high-level strategic decisions.
+
+```json
+{{ round_level_verdict_json }}
+```
+
+Key fields:
+- `round_verdict` — 2-3 sentence summary of this round.
+- `next_round_focus` — concrete directive for next round (this prompt's round).
+  **Treat as a directive of priority equal to §2E.1.recommended_action.**
+- `exploration_vs_exploit` — `exploit` (extend best), `explore` (test
+  under-tested), or `balanced`.
+- `stop_recommendation` — if `TRUE`, the round shows diminishing returns.
+- `key_finding` — the single most useful learning from this round.
+
+Round-level differential diagnosis (best vs worst, included for transparency):
+
+```json
+{{ differential_diagnosis_json }}
+```
+
+#### §2E.3 Supporting Detail (dig deeper if §2E.1 confidence is low)
+
+Per-candidate 4-layer status with observations citing specific task_ids,
+plus the full breakdown and memory_compliance. Use this to verify or
+override §2E.1 when its confidence is low.
+
+```json
+{{ supporting_detail_json }}
+```
+
+Per-candidate fields shown:
+- `layer_diagnosis` — per-layer status + observations citing task_ids
+- `memory_compliance` — 6-dim instruction-follow summary
+- `breakdown` — 12+5 class failure counts (post A3↔subclass reclassification)
+- `attribution_diagnosis` — one-line rule-based template
+- `architecture` — the architecture that was evaluated
+
+#### §2E.4 Cross-round Knowledge
+
+Experience ledger (active principles, ledger filters out dormant conf<0.3):
+```
+{{ cumulative_principles }}
+```
+
+{% if exploration_hints %}Exploration coverage (under-tested values per dimension):
+```
+{{ exploration_hints }}
+```
+Use this to break ties: when §2E.1 / §2E.2 leave room for exploration,
+prefer under-tested values listed here.{% endif %}
+
+{% if obs_graph_json %}#### §2E.4b Observation Graph (structural experience map)
+
+A rule-based map accumulated across rounds. For each task pattern (by task-complexity
+bucket) it records, from past candidate evaluations:
+  - `architectures_evaluated`: **authoritative** — full joint configs actually
+    tried (`extract | ret | mgmt | store`) and their average per-bucket accuracy
+    (`avg_acc`) over `n` trials. Trust these for choosing a complete config.
+  - `extract_combos` / `retrievers`: **marginal** aggregates only — average
+    accuracy of each extract combo / retriever taken independently. Use them
+    for breadth (which dimension values look promising) but DO NOT assume a
+    high-`avg_acc` extract combo paired with a high-`avg_acc` retriever will be
+    good unless that joint config appears in `architectures_evaluated`.
+  - `categories`: the task-category distribution seen at that complexity bucket.
+
+```json
+{{ obs_graph_json }}
+```
+
+Use it to inform 1A-1D choices: prefer full configs from
+`architectures_evaluated` with high `avg_acc` on the complexity buckets you expect to be the
+bottleneck; use the marginals to explore under-tested values. Treat as advisory
+evidence, not a hard rule.{% endif %}
+
+#### §2E.5 Raw Data (reference only — usually skip)
+
+The structured signals you actually need are in §2E.1-§2E.4. This block is the
+full raw `last_round_json` dump — only consult it if §2E.1-§2E.3 disagree with
+the raw metrics and you need to break the tie:
+
+```json
+{{ last_round_json }}
+```
+
+---
+
+## 3. Your task this round
+
+Progress: round **{{ round_id }} / {{ max_rounds }}** ({{ progress_pct }}% through).
+
+{% if round_id == 1 %}
+**Bootstrap phase** — no Pareto front yet. Generate ALL {{ num_candidates }}
+candidates yourself (`candidate_id: 0..{{ num_candidates - 1 }}`). Their outcomes
+seed the §2E.4 ledger for later rounds.
+
+The {{ num_candidates }} candidates MUST span the search space — do NOT cluster
+them in one family. Use these roles:
+
+- **Candidate 0 (baseline)**: a competent simple config. The pool is empty after
+  warmup so prefer low-threshold backends from §1B unless you have reason otherwise.
+- **Candidate 1 (explore_retrieval)**: change `retrieval` vs Candidate 0. Pair
+  with storage whose threshold the warmup pool can clear.
+- **Candidate 2 (explore_extract)**: select a different `extract_types` subset
+  vs Candidate 0 (add, remove, or swap types) — each of the 5 types captures
+  different knowledge, and subsets trade coverage against extraction cost.
+{% if num_candidates > 3 %}- **Candidate 3+**: one additional axis per slot
+  (storage variant, or an under-sampled management preset).
+{% endif %}
+{% elif progress <= 0.5 %}
+**Broad exploration** — ledger is young. Candidate 0 is auto-injected as the
+**champion** (current Pareto best, re-evaluated unchanged for variance check).
+YOU generate {{ num_candidates_for_llm }} candidate(s) starting from
+`candidate_id: 1`:
+
+- **Candidate 1 (exploit)**: small mutation of the champion — change 1-2 layers,
+  guided by §2E `priority_action` and the dominant attribution category.
+- **Candidate 2 (explore_retrieval)**: change `retrieval` AND at least one other
+  layer. Aim for meaningful difference from the champion (not a single tweak).
+{% if num_candidates_for_llm >= 3 %}- **Candidate 3 (explore_storage)**: keep the
+  champion's extract_types / retrieval / management; only re-route `storage_routing`
+  to a different common backend for the selected types. Low-variance storage probe.
+{% endif %}
+{% elif progress <= 0.75 %}
+**Mixed refinement** — ledger is maturing. Candidate 0 is the auto-injected
+champion. YOU generate {{ num_candidates_for_llm }} candidate(s) from
+`candidate_id: 1`:
+
+- **Candidate 1 (exploit_a)**: 1-2 layer mutation targeting the dominant §2E
+  attribution category (cite the category in `rationale`).
+- **Candidate 2 (exploit_b)**: 1-2 layer mutation on a DIFFERENT layer than
+  Candidate 1, targeting the secondary §2E observation.
+{% if num_candidates_for_llm >= 3 %}- **Candidate 3 (validate_open_question)**:
+  test the most-pressing §2F `open_question`. Cite the question id in `rationale`.
+  If no open_question fits, change the layer with the worst
+  `component_performance` entry.
+{% endif %}
+{% else %}
+**Pure refinement (final rounds)** — ledger is saturated. All LLM candidates
+are 1-layer mutations of the champion. Candidate 0 is the auto-injected
+champion; you generate {{ num_candidates_for_llm }} from `candidate_id: 1`:
+
+- **Candidate 1 (exploit_a)**: 1-layer mutation on the layer flagged by the
+  dominant §2E attribution.
+- **Candidate 2 (exploit_b)**: 1-layer mutation on a DIFFERENT layer, secondary
+  §2E observation.
+{% if num_candidates_for_llm >= 3 %}- **Candidate 3 (exploit_c)**: 1-layer
+  mutation that tests a §2F `principle` with low evidence count (validate /
+  refute it; cite the principle id in `rationale`).
+{% endif %}
+{% endif %}
+
+**Under-sampled component priority**:
+When choosing what to mutate, prefer dimensions whose options have NOT yet been
+evaluated in any prior round (check §2D history table). Pick the under-sampled
+option that best addresses the §2E dominant attribution category.
+
+---
+
+## 4. Output format
+
+Return strict JSON — an array with exactly {{ num_candidates }} objects (or
+{{ num_candidates_for_llm }} starting from `candidate_id: 1` when a champion is
+auto-injected this round). Each object follows this schema:
+
+```json
+[
+  {
+    "candidate_id": 0,
+    "hypothesis": "One sentence: what specific weakness this candidate addresses.",
+    "architecture": {
+      "extract_types": ["tip", "shortcut"],
+      "storage_routing": {"tip": "json", "shortcut": "json"},
+      "retrieval": "contrastive",
+      "management": "tool_manager"
+    },
+    "diversity_role": "exploit | explore_retrieval | explore_extract | explore_storage | validate_open_question | exploit_a | exploit_b | exploit_c",
+    "rationale": "2-3 sentences connecting pool_stats, attribution diagnosis, and this design choice. For exploit roles, list which layers were inherited from the champion and which were mutated."
+  }
+]
+```
+
+**Validation rules**:
+- `architecture` has exactly 4 keys: `extract_types`, `storage_routing`,
+  `retrieval`, `management`. No other keys (no `injection` — injection is fixed
+  at the runtime layer to raw_topk and is not a search dimension).
+- `extract_types`: a non-empty array of 1 to 5 UNIQUE types from §1A
+  (e.g. `["tip"]` or `["tip", "trajectory", "workflow"]`).
+- `storage_routing`: exactly one key per selected extract type, and every key
+  mapped to the SAME backend from §1B (one common store; mixed backends are
+  invalid).
+- `retrieval`: exactly one of the 6 strategies in §1C. If you pick `graph`,
+  the common `storage_routing` value must be `graph` or `llm_graph`.
+- `management`: exactly one of the 4 presets in §1D. If you pick
+  `graph_consolidate`, retrieval must be `graph` and the common
+  `storage_routing` value must be `graph` or `llm_graph`.
+- For any `exploit*` role: at least 2 of the 4 layers must be unchanged from
+  the current champion.
+- Cold-start: if `pool_stats` shows a per-type count below a backend's threshold,
+  prefer a lower-threshold backend for that type.
+- Output strict JSON — no comments, no trailing commas.

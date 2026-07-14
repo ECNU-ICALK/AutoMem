@@ -1,0 +1,183 @@
+# Tool-Chain Playbook Extractor (v2 / library-aligned)
+
+## 1. Role
+Extract the **ordered tool-chain** that led to a successful research-task answer. Each step names a concrete tool and a concrete argument PATTERN (not a placeholder).
+
+You output **no executable code**, **no low-level commands**, and **no answer values**.
+
+## 2. Input Context
+- Task Query: {{ task_query }}
+- Success Flag: {{ is_success }}
+- Task complexity: {{ task_complexity }}              {# simple | medium | complex | unknown #}
+- Task File Types: {{ task_files }}         {# e.g. ["file_xlsx"], ["file_pdf"], or [] #}
+- Raw Trajectory Log: {{ raw_trajectory }}
+- Final Result: {{ final_result }}
+- Failure Reason (optional): {{ failure_reason | default("None", true) }}
+- Reference Trajectory (optional): {{ reference_trajectory | default("None", true) }}
+
+## 2b. Complexity / File Adaptation (Hard)
+- Set `chain_type` based on the task:
+  - `web` if no task_files and trajectory dominated by web_search/crawl_page
+  - `file` if task_files non-empty and trajectory uses inspect_file_as_text
+  - `multimodal` if visual_inspector or audio_inspector dominant
+  - `hybrid` if mixed
+- simple-task chains are typically 1-3 steps; do NOT pad to reach the upper bound.
+
+## 3. Extraction Rules
+
+{% if is_success %}
+
+1. Source Isolation: Use ONLY `raw_trajectory`. Do NOT include steps from `reference_trajectory`.
+
+2. Tool Vocabulary (controlled):
+   - Each step names a concrete tool from: `web_search`, `crawl_page`, `inspect_file_as_text`, `visual_inspector`, `audio_inspector`, `code_interpreter`, `final_answer`.
+
+3. Action Concreteness (Hard, Q1.7 fix):
+   FORBIDDEN in `action` and `query_formulation`:
+   - Literal task-answer values (specific numbers, dates, names that
+     the question asks the agent to identify).
+   - All-uppercase placeholder tokens like `<TARGET_ENTITY>` as the ONLY
+     content (an action whose arguments are 100% placeholders has no
+     reusable signal — those belong in `generalized_execution` only).
+   - Exact domain names, URL slugs, exact non-answer dates, unique
+     section/table/column/worksheet labels (e.g. "the Orbital
+     characteristics infobox" or "IMDb Tech Specs tab" are too specific).
+   ALLOWED in `action` (what makes it transfer across tasks):
+   - Concrete tool name from the controlled vocabulary.
+   - CATEGORY-level source references: "primary-source encyclopedia
+     infobox", "academic abstract", "institutional PDF mirror",
+     "open-access alternative to paywalled DOI", "common
+     filmography/discography table" (structural categories, not unique
+     fingerprints).
+   - Concrete query-shape hints: "with a year qualifier", "with the
+     profession appended for disambiguation", "as a quoted phrase".
+   - Role-level entity references: "the requested biographer", "the
+     target numeric metric".
+   - A small allowlist of broad platforms (Wikipedia / arXiv / IMDb /
+     PubMed / GitHub) ONLY when the platform identity is essential to
+     the tool choice and is paired with a category-level structural
+     hint, NEVER with a unique section/table label.
+   - Good: "web_search the requested person with a year qualifier,
+     expecting a primary-source encyclopaedia page in top results."
+   - Good: "inspect_file_as_text on the attached PDF; ask for the
+     sentence mentioning the role-level referent the question names."
+   - Good: "crawl_page on the primary-source infobox; extract the cell
+     whose row label matches the metric the question asks for."
+   - Bad: "crawl_page the Orbital-characteristics cell of the Moon
+     page." (task-family-specific poison; won't help non-astronomy tasks)
+   - Bad: "Query <DATABASE> for <TARGET_ENTITY> using <METHOD>" (pure
+     placeholders; nothing to transfer).
+   - Bad: "web_search for 'Carl Nebel 1932 biography'" (leaks entity+value).
+
+4. Strict Denoising:
+   - Keep only the critical path that caused success.
+   - Remove dead-ends, retries that didn't change strategy, and "thinking aloud".
+
+5. Dual-Track Separation (Q1.6 fix — complexity-aware, NO PADDING):
+   - `agent_workflow`: decision sequencing (what to do next, and why).
+       • simple lookups: typically 1-2 steps. NEVER pad.
+       • medium multi-hop: typically 2-4 steps.
+       • complex long-horizon: 3-6 phase-level steps (or up to 8 only
+         when distinct verification phases exist).
+       • Hard floor: at least 1 step; hard ceiling: 8.
+       • If the raw trajectory has fewer ACTUAL critical-path actions
+         than the typical range, EMIT THAT NUMBER — adding fabricated
+         "validate" or "finalize" steps to hit a minimum is FORBIDDEN.
+   - `search_workflow`: information-gathering ops (query patterns +
+     evidence validation). 1–4 steps.
+   - If the trajectory contains fewer than 2 distinct search/crawl ops,
+     `search_workflow` may be `[]`.
+
+6. Field Brevity (Hard):
+   - `action`: ≤ 15 words.
+   - `rationale`: ≤ 20 words.
+   - `generalized_execution`: ≤ 25 words (archive-only; may contain `<PLACEHOLDERS>`).
+   - `query_formulation`: ≤ 20 words.
+   - `validation_criteria`: ≤ 20 words.
+
+7. Evidence & Validation:
+   - Each search step must include explicit `validation_criteria` — what counts as verified evidence.
+
+8. Forbidden Content (Hard - triggers rejection):
+   - The literal task-answer value (the specific number / date / name
+     the question asks to identify), ANYWHERE in the output.
+   - The literal entity the question is asking to IDENTIFY.
+   - Exact domain names, URL slugs/fragments, exact non-answer dates,
+     and unique section/table/column/worksheet labels (Q2 fix: the
+     previous allowance for "the Orbital-characteristics infobox" or
+     "IMDb Tech Specs tab" is REMOVED — these fingerprint single specific
+     tasks).
+   ALLOWED: category-level source references such as "primary-source
+   encyclopedia infobox", "academic abstract", "filmography table",
+   "institutional PDF mirror"; a small allowlist of broad platforms
+   (Wikipedia / arXiv / IMDb / PubMed / GitHub) ONLY when paired with a
+   structural category, never with a unique section label.
+
+9. Chain Type + Final Format Check (MANDATORY):
+   - `chain_type`: one of "web" | "file" | "multimodal" | "hybrid".
+     - web        : trajectory dominated by web_search + crawl_page; no file ops
+     - file       : trajectory uses inspect_file_as_text on attached files
+     - multimodal : visual_inspector or audio_inspector dominant
+     - hybrid     : mix (e.g. web_search → inspect_file_as_text)
+   - `final_format_check`: one short imperative naming the format/unit/scaling
+     check that the final_answer must satisfy. Many QA benchmarks grade by exact match;
+     this field reminds the next agent to verify before answering.
+     - Good: "verify the unit printed in the source matches the unit asked"
+     - Good: "return as comma-separated list, alphabetically ordered"
+     - Good: "scale the count by the factor implied by 'in thousands'"
+     - Bad: "double-check" (no mechanism)
+
+10. When-to-Use Triggers (MANDATORY — these gate retrieval/judge/injection):
+   - `use_when`: 1-3 SHORT (≤15 words each) OBSERVABLE triggers a future
+     agent can check on a new query. Workflow triggers should describe
+     the QUERY SHAPE that justifies replaying this chain.
+     Good: "query asks for a numeric metric of a named entity from a
+     primary source". Bad: "complex multi-step questions".
+   - `avoid_when`: 0-2 SHORT anti-triggers — query shapes for which this
+     workflow is unnecessary or wrong (e.g., "answer can be reached by
+     a single web_search call").
+   - `leakage_risk`: "low" | "medium" | "high". "high" if the workflow
+     uniquely fits this task's idiosyncrasies.
+
+{% else %}
+- Return a structured "skipped" output. Do not attempt extraction.
+{% endif %}
+
+X. Strict JSON Syntax (Hard):
+   - Output strictly valid JSON. NO trailing comma before `}` or `]`.
+
+## 4. Output Schema (JSON)
+
+```json
+{% if is_success %}
+{
+  "agent_workflow": [
+    {
+      "step": 1,
+      "action": "concrete tool + concrete verb pattern (≤15 words, no <PLACEHOLDERS>, no answer values)",
+      "rationale": "decision criterion (≤20 words)",
+      "generalized_execution": "archive-only: <PLACEHOLDERS> allowed (≤25 words)"
+    }
+  ],
+  "search_workflow": [
+    {
+      "step": 1,
+      "query_formulation": "concrete query pattern, refer to task values by role not value (≤20 words)",
+      "validation_criteria": "evidence verification rule (≤20 words)"
+    }
+  ],
+  "chain_type": "web | file | multimodal | hybrid",
+  "final_format_check": "imperative naming unit/precision/list-format/scaling check (≤25 words, NO platitudes)",
+  "use_when": ["short observable query-shape trigger ≤15 words", "another"],
+  "avoid_when": ["short anti-trigger ≤15 words"],
+  "leakage_risk": "low | medium | high"
+}
+{% else %}
+{
+  "agent_workflow": null,
+  "search_workflow": null,
+  "skipped": true,
+  "skipped_reason": "is_success is false; orchestration extraction is success-only."
+}
+{% endif %}
+```

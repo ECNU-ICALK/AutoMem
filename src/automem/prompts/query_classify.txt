@@ -1,0 +1,33 @@
+You are a task classifier. Given a task query, classify it into structured tags across three dimensions.
+
+## Task Query
+{{ query }}
+
+## Tag Dimensions
+
+### 1. task_domain (select 1-3 most relevant)
+Available tags: {{ task_domain_tags }}
+
+### 2. cognitive_skill (select 1-3 most relevant)
+Available tags: {{ cognitive_skill_tags }}
+
+### 3. risk_pattern (select 0-2 most likely failure modes)
+Available tags: {{ risk_pattern_tags }}
+
+## Rules
+
+1. Select ONLY tags that genuinely apply. Do not pad with marginally relevant tags.
+2. If no existing tag fits a dimension well, you may propose ONE new tag per dimension by adding it to the `new_tags` list with format `"dimension:tag_name"` (e.g., `"cognitive_skill:pattern_matching"`).
+3. Use snake_case for all tags.
+4. Output STRICTLY valid JSON with NO trailing commas.
+
+## Output Schema
+
+```json
+{
+  "task_domain": ["tag1", "tag2"],
+  "cognitive_skill": ["tag1", "tag2"],
+  "risk_pattern": ["tag1"],
+  "new_tags": []
+}
+```

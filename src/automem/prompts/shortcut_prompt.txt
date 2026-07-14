@@ -1,0 +1,200 @@
+# Tool-Invocation Macro Extractor (v2 / library-aligned)
+
+## 1. Role
+Extract **reusable, parameterized tool sequences** from a successful task — macros that can be replayed on structurally similar tasks. Higher bar than the workflow extractor: only emit if the sequence is genuinely REPLAYABLE on a NEW task of the same class.
+
+You output no executable code, no shell commands, and no task-specific replay scripts.
+
+This prompt also produces **validation-ready** shortcuts for the Tool-Manager
+management preset — each macro includes an explicit input schema, output
+schema, and a test_invocation that downstream management can validate and
+promote.
+
+## 2. Input Context
+- Task Query: {{ task_query }}
+- Success Flag: {{ is_success }}
+- Task complexity: {{ task_complexity }}              {# simple | medium | complex | unknown #}
+- Task File Types: {{ task_files }}         {# e.g. ["file_xlsx"], ["file_pdf"], or [] #}
+- Raw Trajectory Log: {{ raw_trajectory }}
+- Final Result: {{ final_result }}
+- Failure Reason (optional): {{ failure_reason | default("None", true) }}
+- Reference Trajectory (optional): {{ reference_trajectory | default("None", true) }}
+
+## 2b. Complexity / File Adaptation (Hard)
+- simple tasks rarely justify a macro; emit 0 unless the sequence is
+  unambiguously parameterizable.
+- When task_files is non-empty, prefer macros that include file-handling
+  steps (inspect_file_as_text / visual_inspector / audio_inspector) and
+  use `<FILE_PATH>` placeholder.
+
+## 3. Extraction Rules
+
+1. Dual-Mode:
+   {% if is_success %}
+   - Extract 0–2 macros from SUCCESS. Zero is common — only emit if truly replayable.
+   {% else %}
+   - Extract 0–2 salvaged macros from FAILURE, with non-null `failure_diagnosis`.
+   {% endif %}
+
+2. Current-Trace Only: use evidence from `raw_trajectory`. Ignore `reference_trajectory`.
+
+3. No Invented Tools (Hard):
+   - `tool_call` may ONLY use tools/interfaces that appear in `raw_trajectory`.
+   - Allowed tool names (controlled vocabulary): `web_search`, `crawl_page`,
+     `inspect_file_as_text`, `visual_inspector`, `audio_inspector`,
+     `code_interpreter`, `final_answer`.
+   - Do NOT introduce curl/jq/bs4/Wikipedia API/Google CSE/regex scrapers
+     unless executed.
+
+4. Strict Step Format (Hard — enables validation):
+   Each step must have `tool_call` with:
+     - `tool_name` (string, from controlled vocabulary)
+     - `args_pattern` (string, with `<PLACEHOLDER>` tokens, no task-specific values)
+
+5. Mandatory Parameterization (Hard):
+   - Replace task-specific values with typed `<PLACEHOLDERS>`:
+     - `<TARGET_ENTITY>`: the entity being queried
+     - `<TIME_RANGE>`: date range of interest
+     - `<TOPIC_KEYWORD>`: query topic
+     - `<SOURCE_URL>`: URL identified in an earlier step
+     - `<COMPUTED_VALUE>`: a value computed during execution
+     - `<RAW_OBSERVATION>`: raw data returned by a tool
+     - `<FILE_PATH>`: path to an attached file (xlsx / pdf / image / audio)
+     - `<METRIC_NAME>`: the numeric/categorical metric the question targets
+     - `<COLUMN_NAME>`: column to read in tabular data
+     - `<UNIT>`: unit specified in the question (e.g. miles, kilometres, USD)
+     - `<DATE_RANGE>`: date filter (alias of `<TIME_RANGE>` when range vs point matters)
+   - Never hardcode intermediate/final results.
+
+6. Explicit input_schema / output_schema (NEW — enables Tool Manager validation):
+   - `input_schema`: list of `{name, type, description}` for each placeholder
+     the macro needs as input.
+   - `output_schema`: `{type, description}` of what the macro ultimately
+     produces (usually `final_answer`).
+
+7. test_invocation (NEW — enables validation):
+   - A concrete invocation template showing what input values the macro
+     expects to be plugged in. Placeholders stay as `<PLACEHOLDER>`, but the
+     names must match `input_schema` exactly.
+
+7b. Placeholder Invariant (Q1.13 fix — Hard):
+    Every `<PLACEHOLDER>` token used anywhere in the macro
+    (args_pattern, precondition, use_when, test_invocation) MUST appear
+    EXACTLY ONCE in `input_schema` with a matching name (byte-for-byte),
+    UNLESS it is `<COMPUTED_VALUE>` / `<RAW_OBSERVATION>` / `<SOURCE_URL>`
+    that is produced by a prior step's output (in which case it MUST
+    appear in some earlier step's `intent`). Conversely, every
+    `input_schema` entry MUST be referenced by at least one
+    args_pattern. The `test_invocation` keys MUST match `input_schema`
+    names exactly. Violations make the macro non-invocable downstream.
+
+8. Cross-Task Generalizability (Hard, Q1.12 fix):
+   - A shortcut is reusable across DOMAINS but must share the SAME
+     query-shape and tool-state contract — not just "any task that
+     happens to use web_search".
+   - `precondition` and `use_when` MUST name ALL of:
+       (a) required inputs by role (e.g. "needs target entity name and
+           release year")
+       (b) file type or source category (e.g. "for tasks with .xlsx
+           attachment whose first row is a header")
+       (c) tool sequence trigger (e.g. "after web_search returns ≥2
+           candidates with same surname")
+       (d) output type (e.g. "produces a single integer count")
+   - REJECT macros whose only trigger is "complex/multi-step task" or
+     "task that requires web search".
+   - `description` describes the GENERAL pattern, not the specific task.
+
+9. Macro Must Be Replayable (Q1.14 fix — formula-step disallowed):
+   - Include all required steps used in the trace.
+   - Arithmetic: use `code_interpreter` ONLY when it appears in the
+     trace. If arithmetic is required but no computation tool was
+     invoked, EITHER do not emit a shortcut, OR fold the arithmetic
+     into the `intent` of the existing `final_answer` step (do not
+     invent a `formula` action — every `tool_call.tool_name` must come
+     from the controlled vocabulary).
+
+10. Assumptions — Evidence-Based:
+    - List only what's evidenced in `raw_trajectory` (plus generic "network access" if needed). No speculative deps.
+
+11. Diversity:
+    - Each macro covers a distinct sub-capability; prefer 1 high-quality macro over redundancy.
+
+{% if not is_success %}
+12. Salvage Safety:
+    - Do not preserve the exact bug that caused failure; fix it or omit the macro.
+    - `failure_diagnosis` must be specific and evidence-grounded.
+{% endif %}
+
+13. Forbidden Content (Hard — triggers rejection, Q1.15 fix):
+    FORBIDDEN in EVERY shortcut field outside typed `<PLACEHOLDERS>`
+    (covers description / precondition / use_when / avoid_when / intent /
+    assumptions / input_schema.description / args_pattern / failure_diagnosis):
+    - Task-specific entity names (the entity the question is asking to identify)
+    - Exact file basenames, worksheet names, sheet names, column labels
+    - Exact non-answer dates that uniquely identify the task
+    - Exact domain names (use category-level "primary-source encyclopedia",
+      "academic abstract", etc.) and URL slugs/fragments
+    - Benchmark-specific source names (uniquely-fitting platforms)
+    - Numeric answers outside `<PLACEHOLDERS>`
+    Represent these as `<FILE_PATH>`, `<COLUMN_NAME>`, `<METRIC_NAME>`,
+    `<TARGET_ENTITY>`, `<DATE_RANGE>`, or role-level descriptions
+    ("the requested target entity", "the named source category").
+
+14. When-to-Use Triggers (MANDATORY — these gate retrieval/judge/injection):
+    - `use_when`: 1-3 SHORT (≤15 words each) OBSERVABLE triggers a future
+      agent can check. For shortcuts, triggers should describe the
+      query-shape that justifies replay, e.g. "query asks for a date in a
+      named entity's primary-source PDF metadata".
+    - `avoid_when`: 0-2 SHORT anti-triggers — query types where the
+      shortcut would mis-fire.
+    - `leakage_risk`: "low" | "medium" | "high". "high" only if the
+      shortcut hardcodes a benchmark answer pattern.
+
+X. Strict JSON Syntax (Hard):
+   - Output strictly valid JSON. NO trailing comma before `}` or `]`.
+
+## 4. Output Schema (JSON)
+```json
+[
+  {
+    "name": "snake_case_macro_name",
+    "description": "1-2 sentences describing the GENERAL reusable pattern (no task-specific entities).",
+    "precondition": "General trigger condition (no task-specific entities).",
+    "input_schema": [
+      {"name": "<TARGET_ENTITY>", "type": "string", "description": "entity being queried"},
+      {"name": "<TIME_RANGE>", "type": "string", "description": "date range filter"}
+    ],
+    "output_schema": {
+      "type": "string",
+      "description": "the fact or number the macro retrieves"
+    },
+    "test_invocation": {
+      "<TARGET_ENTITY>": "<TARGET_ENTITY>",
+      "<TIME_RANGE>": "<TIME_RANGE>"
+    },
+
+    "assumptions": [
+      "Only items evidenced in raw_trajectory (plus 'network access' if needed)"
+    ],
+    "failure_diagnosis": {% if not is_success %}{
+      "root_cause": "1-sentence, evidence-grounded (no task-specific values)",
+      "correction_hint": "1-sentence, minimal"
+    }{% else %}null{% endif %},
+
+    "action_sequence": [
+      {
+        "step": 1,
+        "intent": "One-line intent; state where placeholders come from if extracted.",
+        "tool_call": {
+          "tool_name": "web_search",
+          "args_pattern": "\"<TARGET_ENTITY>\" filetype:pdf <TIME_RANGE>"
+        }
+      }
+    ],
+
+    "use_when": ["short observable query-shape trigger ≤15 words", "another"],
+    "avoid_when": ["short anti-trigger ≤15 words"],
+    "leakage_risk": "low | medium | high"
+  }
+]
+```

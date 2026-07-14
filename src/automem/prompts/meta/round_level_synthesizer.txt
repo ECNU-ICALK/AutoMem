@@ -1,0 +1,100 @@
+You are a memory-architecture-search strategist.
+
+Round {{ round_id }} just completed with {{ n_candidates }} candidate(s). Each candidate has already been individually synthesized into a verdict. Now I need a **round-level synthesis**: what did this round teach us, and what should the next round focus on?
+
+This output goes directly into the next-round proposer prompt, so make it strategic and actionable.
+
+---
+
+## Input
+
+### A. Per-candidate synthesized verdicts (Smart-9a)
+
+Each entry has: config_id, architecture, accuracy, plus the synthesized fields (primary_signal, recommended_action, memory_bypass, out_of_scope_for_memory, etc.).
+
+```json
+{{ candidate_verdicts_json }}
+```
+
+### B. Round-level differential diagnosis (Smart-4)
+
+Best-vs-worst candidate gap analysis. Tells you what single architectural change drove the accuracy delta this round.
+
+```json
+{{ differential_diagnosis_json }}
+```
+
+### C. Current Pareto state
+
+```json
+{{ pareto_status_json }}
+```
+
+### D. Cumulative tracking (rounds_to_discovery progress)
+
+```json
+{{ cumulative_tracking_json }}
+```
+
+---
+
+## Synthesis rules
+
+**Rule 1 — Round verdict (`round_verdict`)**:
+Write 2-3 natural sentences summarizing the round. Cite the best candidate's
+config_id, the key architectural finding from the differential, and one
+notable failure pattern across candidates (if any).
+
+**Rule 2 — Next round focus (`next_round_focus`)**:
+This is the **most important field** — the next-round proposer reads it as a
+directive. Be concrete:
+- If best candidate clearly extends a winning direction → cite extending it
+  (e.g. "Extend r4_c1's graph storage + contrastive retrieval combo; vary
+  management preset within {lightweight, tool_manager}").
+- If all candidates show `memory_bypass=TRUE` → "Memory is not the
+  bottleneck this round; propose diverse exploration to test other
+  architectures, do not chase retrieval mutations."
+- If all `out_of_scope_for_memory=TRUE` → "Failures are non-memory; pick
+  diverse explore_* architectures."
+- If differential shows a sharp accuracy gap (>5%) → emphasize **extending
+  the winning configuration** in next round.
+- If accuracy gap is tiny (<2%) → emphasize **exploration**.
+
+**Rule 3 — `exploration_vs_exploit`**:
+- `exploit`: best candidate clearly dominates; extend it
+- `explore`: candidates plateaued / memory_bypass detected / out_of_scope
+- `balanced`: extend best + 1 diverse explore candidate
+
+**Rule 4 — `stop_recommendation`**:
+Set TRUE when ALL of:
+- `cumulative_max_acc` has not improved for 2+ rounds AND
+- All candidates show `memory_bypass=TRUE` or `out_of_scope_for_memory=TRUE` AND
+- `front_size` has not grown for 2+ rounds
+
+This signals diminishing returns from further memory search.
+
+**Rule 5 — `key_finding`**:
+Identify the single most useful learning. Examples:
+- "Graph storage + contrastive retrieval combo dominates hybrid in this pool size."
+- "Memory compliance is high (≥0.7) — failures are task_agent reasoning, not memory."
+- "Adding 'shortcut' extract_type harms hit_rate when pool is small (<200 units)."
+
+**Rule 6 — `evidence_from_best`**:
+Quote 1 specific finding from the best candidate's verdict that supports
+`next_round_focus`. Include best candidate's config_id.
+
+---
+
+## Output
+
+Strictly valid JSON only. No markdown fences. No prose before/after.
+
+{
+  "round_verdict":          "<2-3 sentence summary of the round>",
+  "next_round_focus":       "<1-2 sentence concrete directive for next round proposer>",
+  "exploration_vs_exploit": "<exploit|explore|balanced>",
+  "stop_recommendation":    <true|false>,
+  "key_finding":            "<1 sentence: the main learning from this round>",
+  "evidence_from_best":     "<1 sentence: cite best candidate's config_id + finding>",
+  "reasoning":              "<1-2 sentence: which inputs drove the recommendation>"
+}

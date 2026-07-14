@@ -1,0 +1,127 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "automem-search"
+version = "0.1.0"
+description = "Task-adaptive memory architecture search for LLM agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "AutoMem Contributors" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+  "filelock>=3.15,<4",
+  "jinja2>=3.1,<4",
+  "json-repair>=0.30,<1",
+  "huggingface-hub>=0.26,<2",
+  "networkx>=3.2,<4",
+  "numpy>=1.26,<3",
+  "openai>=1.50,<3",
+  "pillow>=10,<12",
+  "pydantic>=2.8,<3",
+  "pyyaml>=6,<7",
+  "rich>=13,<15",
+  "scikit-learn>=1.4,<2",
+  "sentence-transformers>=3,<6",
+]
+
+[project.optional-dependencies]
+vector = [
+  "faiss-cpu>=1.8",
+]
+web = [
+  "beautifulsoup4>=4.12,<5",
+  "httpx>=0.27,<1",
+  "openai>=1.50,<3",
+  "pandas>=2.2,<3",
+  "python-dotenv>=1,<2",
+  "requests>=2.32,<3",
+  "tqdm>=4.66,<5",
+]
+benchmarks = [
+  "beautifulsoup4>=4.12,<5",
+  "biopython>=1.84,<2",
+  "faiss-cpu>=1.8",
+  "httpx>=0.27,<1",
+  "huggingface-hub>=0.26,<2",
+  "mammoth>=1.8,<2",
+  "markdownify>=0.13,<2",
+  "openai>=1.50,<3",
+  "openpyxl>=3.1,<4",
+  "pandas>=2.2,<3",
+  "pdfminer.six>=20231228,<20280000",
+  "pillow>=10,<12",
+  "puremagic>=1.28,<2",
+  "pydub>=0.25,<1",
+  "python-dotenv>=1,<2",
+  "python-pptx>=1,<2",
+  "requests>=2.32,<3",
+  "SpeechRecognition>=3.10,<4",
+  "tqdm>=4.66,<5",
+  "youtube-transcript-api>=0.6,<2",
+  "xlrd>=2,<3",
+]
+dev = [
+  "build>=1.2,<2",
+  "pytest>=8,<9",
+  "pytest-cov>=5,<7",
+  # Lightweight imports reached by agent unit tests. CI also installs the
+  # benchmarks extra for the full multimedia test closure.
+  "python-dotenv>=1,<2",
+  "requests>=2.32,<3",
+  "ruff>=0.11,<1",
+  "tomli>=2,<3; python_version < '3.11'",
+]
+
+[project.urls]
+Repository = "https://github.com/ECNU-ICALK/AutoMem"
+Issues = "https://github.com/ECNU-ICALK/AutoMem/issues"
+
+[project.scripts]
+automem = "automem.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+automem = [
+  "prompts/*.txt",
+  "prompts/*.md",
+  "prompts/**/*.txt",
+  "prompts/**/*.md",
+]
+flashoagents = ["prompts/*.yaml", "prompts/**/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "integration: exercises multiple AutoMem components",
+  "online: requires external services and is excluded from CI",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["paper", "third_party"]
+
+[tool.ruff.lint]
+# Keep the release gate focused on defects in the migrated research code. Broader
+# style and annotation modernization can proceed independently of behavior fixes.
+select = ["E902", "F401", "F541", "F821", "F841"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

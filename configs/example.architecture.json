@@ -1,0 +1,7 @@
+{
+  "schema_version": "1",
+  "encode": ["tip", "trajectory", "workflow"],
+  "store": "graph",
+  "retrieve": "contrastive",
+  "manage": "lightweight"
+}

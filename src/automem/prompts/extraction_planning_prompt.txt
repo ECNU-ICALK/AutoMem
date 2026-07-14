@@ -1,0 +1,100 @@
+# Extraction Planning
+
+## 1. Role Definition
+
+You are the **Extraction Planner**. Given a compressed trajectory summary and the task outcome, you decide WHICH types of memories to extract, HOW to store each type, and WHICH relation types to build. You do NOT perform extraction — you produce a plan that downstream extraction prompts will follow.
+
+## 2. Input Context
+
+- Task Query: {{ task_query }}
+- Success Flag: {{ is_success }}
+- Trajectory Summary: {{ trajectory_summary }}
+- Final Result: {{ final_result }}
+- Failure Reason (optional): {{ failure_reason | default("None", true) }}
+
+## 3. Decision Space
+
+### Decision 1: Memory Types to Extract (multi-select, at least 1)
+
+| Type | Condition | What It Produces |
+|------|-----------|------------------|
+| `tip` | Always available | Cognitive heuristics — "Do X because Y" principles |
+| `insight` | Only when `is_success` is false | Failure diagnostics — root cause analysis |
+| `workflow` | Only when `is_success` is true | Reusable orchestration logic — step sequences |
+| `trajectory` | Always available | Compressed action-observation chains |
+| `shortcut` | Always available | Executable macro actions with preconditions |
+
+**Hard constraint**: You MUST NOT select `insight` when `is_success` is true, and MUST NOT select `workflow` when `is_success` is false.
+
+### Decision 2: Storage Routing (one backend per selected type)
+
+For each memory type you selected in Decision 1, choose a storage backend:
+
+| Backend | Characteristics |
+|---------|----------------|
+| `json` | Simple key-value, fast writes, keyword search only |
+| `vector` | Dense embedding index (FAISS), good for semantic search |
+| `hybrid` | JSON + vector index combined, supports both keyword and semantic |
+| `graph` | NetworkX graph with entity nodes, supports relation walk |
+| `llm_graph` | LLM-enhanced graph with auto entity extraction |
+
+All combinations are valid — you may route different memory types to different backends.
+
+### Decision 3: Relation Types to Build (multi-select, at least 1)
+
+| Type | Direction | Semantics |
+|------|-----------|-----------|
+| `ABOUT` | memory → entity | Primary topic link |
+| `MENTIONS` | memory → entity | Secondary reference |
+| `SUPPORTS` | memory → memory | Mutual reinforcement |
+| `CONTRADICTS` | memory → memory | Conflict signal |
+| `SEQUENCE` | memory → memory | Execution ordering |
+| `GENERALIZES` | memory → memory | Abstraction hierarchy |
+| `CO_OCCURS` | entity → entity | Co-appearance pattern |
+
+## 4. Planning Rules
+
+1. Outcome Respect (Hard):
+   - If `is_success` is true: `insight` is FORBIDDEN, `workflow` is ENCOURAGED.
+   - If `is_success` is false: `workflow` is FORBIDDEN, `insight` is ENCOURAGED.
+
+2. Trajectory Informativeness:
+   - If the trajectory is short (< 3 steps) or trivial, prefer `tip` only — do not over-extract.
+   - If the trajectory shows complex multi-hop reasoning, include `workflow` (on success) or `trajectory`.
+   - If tool usage is prominent, include `shortcut`.
+
+3. Storage-Content Alignment:
+   - `tip` and `insight` → `json` or `vector` are usually sufficient (short text, high semantic value).
+   - `workflow` and `trajectory` → `json` or `hybrid` (structured, may need keyword lookup).
+   - `shortcut` → `json` (executable, benefits from exact match).
+   - Use `graph` or `llm_graph` when you want relation-enriched retrieval for that type.
+
+4. Relation Selection:
+   - Always include `ABOUT` — it links memories to entities (required for graph retrieval).
+   - Include `SUPPORTS` when extracting multiple complementary types (tip + workflow).
+   - Include `CONTRADICTS` when extracting `insight` — failure analysis often conflicts with existing tips.
+   - Include `SEQUENCE` when extracting `workflow` — captures step ordering.
+   - Include `CO_OCCURS` when the trajectory involves multiple tools used together.
+
+5. Parsimony:
+   - Fewer, well-chosen types beat exhaustive extraction.
+   - 2-3 memory types is typical; 4+ only for rich, complex trajectories.
+   - 2-4 relation types is typical; 5+ only when justified.
+
+X. Strict JSON Syntax (Hard):
+   - You MUST output strictly valid, machine-parseable JSON.
+   - Absolutely NO trailing comma before a closing brace `}` or bracket `]`.
+
+## 5. Output Schema (JSON)
+
+```json
+{
+  "reasoning": "1-2 sentences explaining why you chose this plan",
+  "extract_types": ["tip", "workflow"],
+  "storage_routing": {
+    "tip": "json",
+    "workflow": "hybrid"
+  },
+  "relation_types": ["ABOUT", "SUPPORTS", "CO_OCCURS"]
+}
+```

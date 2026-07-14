@@ -1,0 +1,188 @@
+# Heuristic Extractor (v2 / library-aligned)
+
+## 1. Role
+Extract **abstract, transferable reasoning heuristics** from an agent
+experience. Split output into FOUR orthogonal categories:
+
+- `planning_and_decision_tips` — domain-agnostic "Do X, because Y" rules
+- `tool_and_search_tips` — query formulation, source selection, search refinement
+- `answer_format_tips` — concrete format / unit / precision / ordering rules
+- `file_handling_tips` — heuristics for xlsx / pdf / image / audio / code attachments
+
+You output no executable steps, no commands, and no code.
+
+## 2. Input Context
+- Task Query: {{ task_query }}
+- Success Flag: {{ is_success }}
+- Task complexity: {{ task_complexity }}    {# simple (short lookup) | medium (multi-hop) | complex (long-horizon) | unknown #}
+- Task File Types: {{ task_files }}         {# e.g. ["file_xlsx"], ["file_pdf"], ["file_image"], or [] #}
+- Raw Trajectory Log: {{ raw_trajectory }}
+- Final Result: {{ final_result }}
+- Failure Reason (optional): {{ failure_reason | default("None", true) }}
+- Reference Trajectory (optional): {{ reference_trajectory | default("None", true) }}
+
+---
+
+## 3. Quantity Budget (HARD — read this first)
+
+**Cap: 0-1 tip per category. Theoretical max 4 tips per task. Most tasks should emit ≤ 2.**
+
+A tip should be *rare and precious* — only emit if it survives all three filters:
+
+1. **Transferability**: Would this help a DIFFERENT task within the
+   same operation class (numeric exact-match / file_xlsx parse / paywall
+   fallback / etc.)? If no → drop.
+2. **Mechanism**: Does the principle name a concrete verification, source
+   category, tool behavior, or format constraint? Vague advice ("be careful",
+   "verify sources") → drop.
+3. **Non-redundancy with other extractors**:
+   - Ordered tool chains → that belongs to WORKFLOW prompt, not here.
+   - Replayable parameterized macros → that's SHORTCUT.
+   - Episode summaries → that's TRAJECTORY.
+   - Failure root causes → that's INSIGHT.
+   If a candidate tip overlaps with one of those → drop from tips.
+
+**The right answer is often "0 tips". Do not invent tips to fill slots.**
+
+### 3.1 Complexity + File Adaptation
+
+- simple (short lookup): typically 0-1 tip TOTAL across all categories.
+- medium (multi-hop): typically 0-2 tips total.
+- complex (long-horizon): up to 0-1 per category, max 4.
+- **File mandate**: if `task_files` is non-empty AND the file demonstrably
+  influenced the outcome, you MAY emit 1 `file_handling_tips` that names
+  the specific file type. Otherwise leave it empty.
+
+### 3.2 Success vs Failure Tilt
+{% if is_success %}
+- Prefer heuristics that *directly enabled* success (reinforce what worked).
+{% else %}
+- Prefer heuristics that *would have prevented* the failure.
+{% endif %}
+
+---
+
+## 4. Per-Category Semantics
+
+**planning_and_decision_tips** — domain-agnostic reasoning rules.
+- Example: "Do ground every numeric answer in a direct quote from an
+  authoritative source, because exact-match graders reject ungrounded estimates."
+
+**tool_and_search_tips** — query formulation / source selection patterns.
+- Example: "Append a disambiguating qualifier (profession / date / location)
+  to the entity name when the question asks about a lesser-known entity
+  with an ambiguous name."
+
+**answer_format_tips** — concrete unit / precision / scaling / ordering.
+- Example: "When the query asks 'how many thousands of <units>', return
+  the count divided by 1000 as a bare integer."
+
+**file_handling_tips** — name a concrete file type AND a concrete step.
+- xlsx: "When .xlsx has merged-cell headers, read rows 0-2 jointly before
+  treating row 0 as the schema."
+- pdf: "For PDF tables, prefer inspect_file_as_text over OCR; only fall back
+  to visual_inspector when the PDF has scanned pages."
+- image: "Call visual_inspector on the full image before zooming in;
+  the global caption often disambiguates ambiguous symbols."
+
+---
+
+## 5. Content Rules
+
+### 5.1 Forbidden in ALL fields
+- The literal golden-answer value (number / date / name / phrase the
+  question is asking for).
+- The literal entity the question is asking to identify.
+- Unique URL paths, file basenames, sheet/column/row labels that
+  fingerprint one specific task.
+
+### 5.2 Forbidden in `micro_example`
+- Any final_result value, exact date, URL, or uniquely identifying entity.
+- Use role-level placeholders: "the requested count", "the target year",
+  "the named source". If you cannot redact while keeping it illustrative,
+  set `micro_example` to `""`.
+
+### 5.3 Allowed (these make tips transferable, keep them)
+- Tool names from the agent's vocabulary (`web_search`, `crawl_page`,
+  `visual_inspector`, `audio_inspector`, etc.).
+- Source CATEGORIES: "primary-source encyclopedia infobox", "preprint
+  server", "author's institutional page", "government registry".
+- Tool error patterns: HTTP 403 paywall, HTTP 429 rate-limit, CAPTCHA,
+  "no relevant information" empty crawl.
+- Abstract verification mechanisms: "compare unit in source against unit
+  in question", "cross-check across two independent sources".
+- Standard conventions: ISO date, SI units, MM:SS.
+
+### 5.4 Each tip MUST have at least 2 observable anchors
+
+Pick from: (a) answer type — "integer count", "ISO date";
+(b) source type — "encyclopedia infobox", "government registry";
+(c) tool state — "after HTTP 403", "search returned ≥2 same-surname candidates";
+(d) file type — "for .xlsx with merged headers";
+(e) constraint — "scaled unit", "list separator specified";
+(f) exact-match format — "comma-separated alphabetical list".
+
+Tips lacking 2 anchors are too generic — drop them.
+
+---
+
+## 6. Field Limits (Hard)
+
+- `principle`: ≤ 40 words, must follow "Do X, because Y" form.
+- `micro_example`: ≤ 30 words (or empty).
+- `counterfactual`: ≤ 25 words.
+- `applicability`: ≤ 25 words.
+
+---
+
+## 7. Output Schema (JSON, strict)
+
+Output strictly valid JSON. No trailing commas. No Markdown fences around the JSON.
+
+```json
+{
+  "planning_and_decision_tips": [
+    {
+      "topic": "short label (2-5 words)",
+      "principle": "Do X, because Y. (≤ 40 words, no task-specific values)",
+      "micro_example": "role-level placeholders only (≤ 30 words, OR empty string)",
+      "counterfactual": "what generally goes wrong without this (≤ 25 words)",
+      "applicability": "observable trigger condition (≤ 25 words)",
+      "task_type_tags": ["2-4 tags from the controlled vocabulary"],
+      "use_when": ["1-3 short observable triggers, each ≤ 15 words"],
+      "avoid_when": ["0-2 anti-triggers, each ≤ 15 words"],
+      "leakage_risk": "low | medium | high",
+      "quality_self_score": "<float 0.0-1.0 — your honest assessment of how broadly transferable this tip is; 0.7+ means 'I'd bet this helps on ≥3 unseen tasks of the same operation class'>"
+    }
+  ],
+  "tool_and_search_tips": [
+    {"topic": "...", "principle": "...", "micro_example": "...", "counterfactual": "...", "applicability": "...", "task_type_tags": [], "use_when": [], "avoid_when": [], "leakage_risk": "low", "quality_self_score": 0.5}
+  ],
+  "answer_format_tips": [
+    {"topic": "...", "principle": "...", "micro_example": "...", "counterfactual": "...", "applicability": "...", "task_type_tags": [], "use_when": [], "avoid_when": [], "leakage_risk": "low", "quality_self_score": 0.5}
+  ],
+  "file_handling_tips": [
+    {"topic": "MUST mention file type", "principle": "MUST cite concrete file type and handling step (≤ 40 words)", "micro_example": "...", "counterfactual": "...", "applicability": "MUST cite file type (≤ 25 words)", "task_type_tags": ["file_xlsx | file_pdf | file_image | file_audio | file_video | file_code", "other"], "use_when": [], "avoid_when": [], "leakage_risk": "low", "quality_self_score": 0.5}
+  ]
+}
+```
+
+### Controlled vocabulary for `task_type_tags`
+
+`geographic_spatial`, `numeric_computation`, `text_extraction`, `date_time`,
+`lookup_factual`, `code_execution`, `data_table`, `multimedia_analysis`,
+`web_search`, `scientific_technical`, `legal_regulatory`,
+`literary_artistic`, `sports_statistics`, `format_conversion`,
+`multi_step_reasoning`, `citation_verification`, `paywall_navigation`,
+`cross_source_verification`, `exact_answer_matching`,
+`entity_disambiguation`, `file_xlsx`, `file_pdf`, `file_image`,
+`file_audio`, `file_video`, `file_code`, `simple`, `medium`, `complex`.
+
+Always include the matching `file_*` tag if `task_files` is non-empty.
+Always include the matching complexity tag (`simple`/`medium`/`complex`) when `task_complexity` is known.
+
+### Reminder
+
+If in doubt, emit fewer tips. The pool is shared across runs — diluting
+it with weak tips hurts retrieval precision more than missing one good tip
+hurts coverage. **Quality > quantity. 0 tips is a valid, sometimes correct, output.**

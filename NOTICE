@@ -1,0 +1,8 @@
+AutoMem
+Copyright 2026 AutoMem Contributors
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the full text.
+
+This repository includes modified third-party runtime source with preserved
+file-level copyright and Apache-2.0 headers. See THIRD_PARTY_NOTICES.md for the
+recorded provenance and its limitations.

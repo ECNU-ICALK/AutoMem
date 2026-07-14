@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use AutoMem, please cite the software using this metadata."
+title: "AutoMem"
+type: software
+version: 0.1.0
+license: Apache-2.0
+authors:
+  - family-names: Du
+    given-names: Lin
+repository-code: "https://github.com/ECNU-ICALK/AutoMem"
+keywords:
+  - LLM agents
+  - long-term memory
+  - architecture search
+

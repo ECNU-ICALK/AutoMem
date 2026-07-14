@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-validation:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install AutoMem and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,benchmarks]'
+
+      - name: Validate public metadata
+        run: |
+          python - <<'PY'
+          import pathlib
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          required = {
+              "README.md",
+              "README_CN.md",
+              "LICENSE",
+              "NOTICE",
+              "THIRD_PARTY_NOTICES.md",
+              "CITATION.cff",
+              "docs/architecture.md",
+              "docs/configuration.md",
+              "docs/reproduction.md",
+              "docs/reproduction_CN.md",
+              "configs/README.md",
+              "configs/example.architecture.json",
+          }
+          missing = sorted(path for path in required if not pathlib.Path(path).is_file())
+          if missing:
+              raise SystemExit(f"missing required files: {missing}")
+
+          with open("pyproject.toml", "rb") as handle:
+              project = tomllib.load(handle)["project"]
+          assert project["version"] == "0.1.0"
+          assert project["requires-python"] == ">=3.10"
+          PY
+
+      - name: Reject credentials and oversized files
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+
+          root = pathlib.Path(".")
+          forbidden_dirs = {"data", "downloads", "runs", "storage", "external_baselines"}
+          present = sorted(name for name in forbidden_dirs if (root / name).exists())
+          if present:
+              raise SystemExit(f"forbidden runtime directories: {present}")
+
+          secret = re.compile(r"(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,})")
+          for path in root.rglob("*"):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              if path.stat().st_size > 5 * 1024 * 1024:
+                  raise SystemExit(f"file exceeds 5 MiB: {path}")
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  continue
+              if secret.search(text):
+                  raise SystemExit(f"possible credential in {path}")
+          PY
+
+      - name: Compile and run offline smoke checks
+        run: |
+          python -m compileall -q src
+          ruff check src tests
+          automem space
+          automem smoke
+
+      - name: Run offline tests
+        run: pytest -m 'not online'
+
+      - name: Run evolution, resume, and final-validation smoke
+        run: |
+          smoke_root="$(mktemp -d)"
+          common_args=(
+            --run_name evolution-smoke
+            --output_dir "$smoke_root"
+            --infile examples/smoke_tasks.jsonl
+            --max_rounds 2
+            --num_candidates 3
+            --warmup_n 1
+            --search_n 4
+            --batch_size 2
+            --validation_n 1
+            --test_n 1
+            --dry_run
+            --no_ledger
+          )
+          python -m automem.search.engine "${common_args[@]}"
+          python -m automem.search.engine "${common_args[@]}" --resume
+          python -m automem.search.engine "${common_args[@]}" --resume --final_validation

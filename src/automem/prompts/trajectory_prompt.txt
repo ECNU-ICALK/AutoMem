@@ -1,0 +1,186 @@
+# Action-Observation Trace Compressor (v2 / library-aligned)
+
+## 1. Role
+Compress raw agent execution logs into a **chronological action→observation chain** plus summary fields that make the episode retrievable.
+
+You do not reflect, speculate, or derive conclusions. Record only what was done and what was observed.
+
+## 2. Input Context
+- Task Query: {{ task_query }}
+- Success Flag: {{ is_success }}
+- Task complexity: {{ task_complexity }}              {# simple | medium | complex | unknown #}
+- Task File Types: {{ task_files }}         {# e.g. ["file_xlsx"], ["file_pdf"], or [] #}
+- Raw Trajectory Log: {{ raw_trajectory }}
+- Final Result: {{ final_result }}
+- Failure Reason (optional): {{ failure_reason | default("None", true) }}
+- Reference Trajectory (optional): {{ reference_trajectory | default("None", true) }}
+
+## 2b. Complexity / File Adaptation (Hard)
+- simple-task trajectories often genuinely complete in 1-2 steps; preserve that
+  shape rather than padding.
+- For file-* steps (inspect_file_as_text, visual_inspector, audio_inspector),
+  compress arguments to file-type role only (e.g. `inspect_file_as_text(<pdf>)`,
+  `visual_inspector(<image>)`); never include the literal file path.
+
+## 3. Extraction Rules
+
+### Part A — Step Compression (the `steps` array)
+
+1. Source Isolation: compress ONLY steps found in `raw_trajectory`. Ignore `reference_trajectory`.
+
+2. Objective Facts Only:
+   - Record only WHAT WAS DONE (action/tool call) and WHAT WAS OBSERVED (raw returned output, state change, error text).
+   - Exclude: reflections, principles, critiques, root-cause guesses, plans, "why".
+   - `observation` must contain only raw returned data, status codes, or error text.
+
+3. Noise Filtering (Hard):
+   - Remove internal monologue ("I think…", "Let me…", "I should…").
+   - Remove empty filler ("Nothing happens", "Waiting", repeated no-op).
+
+4. Atomic Steps: each step is a single atomic action with its immediate observation. If one action yields multiple observations, keep only the most decision-relevant one.
+
+5. Strict Indexing: chronological, step_id = 0, 1, 2, …
+
+6. Step Count (Hard, Q1.8 fix — complexity-aware):
+   - simple: typically 1-3 steps. DO NOT pad.
+   - medium: typically 2-6 steps.
+   - complex: 3-12 steps. Preserve every PHASE-CHANGING pivot
+     (file_parse, web fallback, disambiguation, computation, final
+     exact-match check) up to 12. Merge retries within the same phase
+     but DO NOT drop distinct source families or validation pivots.
+   - Hard floor: 1; Hard ceiling: 12 for complex, 8 for others.
+   - If raw trajectory has >ceiling atomic actions, prefer phase-level
+     compression (multiple retries within one phase → 1 step) over
+     dropping phase-changing steps.
+
+7. Field Constraints:
+   - `action`: format `tool_name(key_arg_1, key_arg_2)` — keep tool name
+     verbatim, compress arguments to essential identifiers. ≤ 30 words.
+     For file/multimodal steps, normalize to role-level: e.g.
+     `inspect_file_as_text(<pdf>)`, `visual_inspector(<image>)`; never
+     include the literal file path.
+   - `observation`: raw returned data or error text only. ≤ 40 words.
+     Include exact error codes/names (e.g., "HTTP 429", "KeyError",
+     "No relevant information"); for table-cell observations the limit
+     may be relaxed to fit the row, but stay terse.
+
+7b. JSON Robustness (Q1.10 fix — Hard):
+    Raw crawl/table/error outputs often contain quotes, backslashes,
+    newlines, or HTML/JSON snippets that break JSON serialization. To
+    avoid the parser dropping the entire trajectory unit on JSONDecodeError:
+    - JSON-escape every double-quote (\") and backslash (\\) inside
+      `action` and `observation` strings.
+    - Replace newlines and tabs with single spaces.
+    - For long HTML / JSON / table-cell observations, write a 1-sentence
+      SUMMARY in plain text instead of pasting the raw multi-line
+      content. Indicate truncation with " ..." but do not paste the body.
+
+8. Failed Tasks — Final Step:
+   - Append failure reason: `<raw_answer> | FAIL: <failure_reason summary>`.
+
+### Part B — Summary Fields (MANDATORY — these make the trajectory retrievable)
+
+9. `key_decision` (one sentence, <=30 words):
+   - Pivotal choice / pivot point that determined the final outcome.
+   - SUCCESS: what did the agent do differently that led to the answer?
+   - FAILURE: at which decision point did the agent diverge from the right path?
+   - MUST be transferable: an agent on a DIFFERENT task of the same family
+     would learn something from this sentence.
+   - Concrete source types, tool names, section names ARE allowed - they
+     are what makes this transferable. Only the literal task answer
+     value / the entity being identified is forbidden.
+   - Good: "Switched from a paywalled DOI URL to an open-access mirror
+     after HTTP 403; the numeric-claim target stayed the same."
+   - Good: "Cross-checked the unit printed on the primary source against
+     the unit asked for in the question, catching a scale mismatch."
+   - Good: "Disambiguated two same-surname candidates by adding the
+     profession qualifier to the web_search query."
+   - Bad: "Read the Orbital-characteristics row of the Moon page."
+     (task-family-specific; no value for non-astronomy questions)
+   - Bad: "Found the Greetham article on Project MUSE." (leaks entity
+     and only useful for this exact question)
+   - Bad: "The agent searched Google." (too vague, no mechanism)
+
+10. `tool_strategy` (≤ 15 words):
+    - Short label for the access/search pattern used.
+    - Format: tool sequence with outcome notes.
+    - Examples:
+      - "web_search → crawl(paywall fail) → web_search(alt source) → crawl(success)"
+      - "web_search → crawl → final_answer"
+      - "web_search(3x refinement) → crawl → compute → final_answer"
+
+11. `critical_observation` (≤ 25 words, Q1.9 fix — REDACT answer-likes):
+    - The single most decision-relevant observation from the entire trajectory.
+    - SUCCESS: the observation that directly enabled the correct answer.
+    - FAILURE: the observation that was misinterpreted or missed.
+    - REDACT answer-like values. Because this field is rendered into
+      future agent prompts, it must NOT contain:
+        • literal golden answer values (numbers, dates, names the
+          question is asking to identify)
+        • exact non-answer dates that uniquely identify the task
+        • URLs, URL slugs, or file basenames
+        • uniquely-identifying entity names
+    - Keep verbatim: error codes / tool statuses / structural patterns
+      (HTTP 403, "No relevant information", "row count: N"), but for
+      sensitive values write the role-level paraphrase ("the requested
+      year was found in the infobox") not the value.
+    - If redacting would erase the signal, set `leakage_risk` to "high"
+      and the injection layer will withhold this unit on held-out tasks.
+
+12. Forbidden in summary fields (Hard - triggers rejection):
+   - `key_decision` must NOT name the LITERAL golden-answer value or
+     the literal entity the question is asking to identify. Refer to
+     that entity by its ROLE.
+   - `key_decision` and `tool_strategy` MUST NOT use angle-bracket
+     `<PLACEHOLDER>` tokens (Q1.11 fix). Those tokens are reserved for
+     SHORTCUT.args_pattern and WORKFLOW.generalized_execution. Use
+     plain role-level nouns instead: "the target entity", "the
+     requested numeric metric", "the named source category".
+   - Concrete source types and tool names are OK at category-level only;
+     no exact domain / URL / unique table / column / worksheet labels.
+
+13. `reusable_anchor` (MANDATORY, <=20 words):
+   - A short, MECHANISM-level label the next agent can recognise this
+     trajectory by.  Tool names, error codes, verification steps OK;
+     task-family vocabulary NOT OK.
+   - Good: "DOI paywall HTTP 403 -> open-access fallback"
+   - Good: "same-surname disambiguation via profession qualifier"
+   - Good: "visual_inspector on thumbnail before audio_inspector"
+   - Good: "count-under-multi-constraint: enumerate every row"
+   - Bad: "searched the web" (too vague, no mechanism)
+   - Bad: "the Carl Nebel biography pattern" (leaks entity; poison)
+   - Bad: "Moon-orbit infobox lookup" (task-family-specific; poison)
+
+14. When-to-Use Triggers (MANDATORY — these gate retrieval/judge/injection):
+   - `use_when`: 1-3 SHORT (≤15 words each) OBSERVABLE triggers — the
+     query-shape / tool-state pattern that signals this trajectory may
+     repeat. Tied to `reusable_anchor`. Good: "first crawl returned
+     HTTP 403 paywall on a primary source". Bad: "hard task".
+   - `avoid_when`: 0-2 SHORT anti-triggers (query types that should NOT
+     retrieve this trajectory).
+   - `leakage_risk`: "low" | "medium" | "high". "high" if this trajectory
+     would only repeat for the exact entity/value of this task.
+
+X. Strict JSON Syntax (Hard):
+   - Output strictly valid JSON object (NOT an array). NO trailing comma before `}` or `]`.
+
+## 4. Output Schema (JSON)
+
+```json
+{
+  "steps": [
+    {
+      "step_id": 0,
+      "action": "tool_name(compressed_args) — ≤30 words",
+      "observation": "raw returned data or error text — ≤20 words"
+    }
+  ],
+  "key_decision": "one transferable sentence about pivotal choice (≤30 words, role-level nouns ONLY — no <PLACEHOLDERS>, no specific entity/value)",
+  "tool_strategy": "tool sequence label <=15 words",
+  "critical_observation": "most decision-relevant raw observation (<=25 words)",
+  "reusable_anchor": "concrete methodology label, <=20 words (see rule 13)",
+  "use_when": ["short observable trigger ≤15 words", "another"],
+  "avoid_when": ["short anti-trigger ≤15 words"],
+  "leakage_risk": "low | medium | high"
+}
+```
