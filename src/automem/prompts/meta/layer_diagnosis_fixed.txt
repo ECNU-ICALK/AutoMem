@@ -146,7 +146,7 @@ Output a JSON object with this exact structure:
     "suggestion": "..."
   },
   "overall": "1-2 sentences: which layer is the primary bottleneck and what to fix first.",
-  "priority_action": "Concrete architecture-space delta — phrased as 'retrieval: hybrid → contrastive', 'storage_routing.workflow: vector → hybrid', 'management: lightweight → json_full', or 'extract_types: [tip] → [workflow]'. extract_types MUST contain exactly one value from {tip, trajectory, workflow, shortcut, insight}. Avoid generic suggestions like 'tighten retrieval' or 'reduce top_k' (top_k is not a search-space dimension). Do NOT propose injection changes — injection is fixed at the runtime layer."
+  "priority_action": "Concrete architecture-space delta — phrased as 'retrieval: hybrid → contrastive', 'storage_routing: vector → hybrid (all selected types)', 'management: lightweight → json_full', or an extract-type subset edit such as 'extract_types: [tip] → [tip, trajectory]' (add a missing knowledge kind), '[tip, workflow, shortcut] → [tip, workflow]' (drop a noisy type), or '[tip] → [workflow]' (swap). extract_types MUST stay a non-empty subset of {tip, trajectory, workflow, shortcut, insight} with no duplicates. Avoid generic suggestions like 'tighten retrieval' or 'reduce top_k' (top_k is not a search-space dimension). Do NOT propose injection changes — injection is fixed at the runtime layer."
 }
 ```
 
@@ -157,4 +157,4 @@ Rules:
 - **Keep concise**: each observation/suggestion should be under 30 words.
 - **Output strictly valid JSON** — no trailing commas, no comments.
 - **Architecture-deltas only**: priority_action MUST name a concrete change in the 4-layer search space (extract_types / storage_routing / retrieval / management). Generic advice and injection changes are rejected.
-- **Exactly one valid extract type**: any priority_action that introduces multiple values or a value outside {tip, trajectory, workflow, shortcut, insight} is rejected.
+- **Valid extract-type subset**: any priority_action whose extract_types is empty, contains duplicates, or uses a value outside {tip, trajectory, workflow, shortcut, insight} is rejected. When the evidence shows the pool is missing a whole KIND of knowledge (e.g., answers need step-by-step episodes the current types never capture), prefer ADDING that type to the subset over swapping; when a type contributes mostly noise (high prune/low hit share), prefer DROPPING it.

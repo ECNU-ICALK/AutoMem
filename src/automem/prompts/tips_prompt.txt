@@ -135,6 +135,29 @@ Tips lacking 2 anchors are too generic — drop them.
 
 ---
 
+## 6b. Reference Example (one complete, well-formed tip)
+
+```json
+{
+  "topic": "primary-source verification",
+  "principle": "Cross-check a metric found on an aggregator against the primary source before answering, because aggregators lag updates and round values.",
+  "micro_example": "Found the figure on a mirror site; opened the official registry page and matched the exact cell before final_answer.",
+  "counterfactual": "Answers copied from aggregators fail exact-match grading when the primary source was updated.",
+  "applicability": "query asks for an exact numeric or date fact attributable to an official source",
+  "task_type_tags": ["lookup_factual", "web_search"],
+  "use_when": ["top search hits are aggregators or mirrors", "grading requires exact value match"],
+  "avoid_when": ["question asks for synthesis or opinion, not a verifiable fact"],
+  "leakage_risk": "low",
+  "quality_self_score": 0.8
+}
+```
+
+Notice what makes it good: a mechanism ("cross-check against primary source"),
+a reason ("aggregators lag"), observable triggers, and zero task-specific
+entities/values — it transfers to any web-research task family.
+
+---
+
 ## 7. Output Schema (JSON, strict)
 
 Output strictly valid JSON. No trailing commas. No Markdown fences around the JSON.

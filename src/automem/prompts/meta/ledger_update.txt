@@ -43,7 +43,9 @@ All keys are optional — include only the fields you have evidence to update.
 ```jsonc
 {
   // (1) Add NEW principles discovered THIS round.
-  //   Limit: at most {{ max_new_principles }} new principles per round.
+  //   Limit: at most {{ max_new_principles }} new principles per round; the whole
+  //   ledger is capped at {{ max_total_principles }} active principles, so prefer
+  //   strengthening or refuting an existing principle over adding a near-duplicate.
   //   Constraint: every principle MUST have ≥ 1 evidence; confidence ≥ {{ high_conf_threshold }}
   //   requires ≥ {{ min_evidence_for_high_conf }} supporting evidence — otherwise the runner
   //   will silently downgrade your confidence to keep the constraint.

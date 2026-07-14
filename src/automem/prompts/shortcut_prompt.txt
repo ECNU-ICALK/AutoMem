@@ -73,9 +73,13 @@ promote.
      produces (usually `final_answer`).
 
 7. test_invocation (NEW — enables validation):
-   - A concrete invocation template showing what input values the macro
-     expects to be plugged in. Placeholders stay as `<PLACEHOLDER>`, but the
-     names must match `input_schema` exactly.
+   - A concrete invocation example: keys are the placeholder names and MUST
+     match `input_schema` exactly (byte-for-byte); values are SHORT,
+     GENERALIZED example values that show what a real call looks like
+     (role-level, never a task answer or unique entity), e.g.
+     `{"<TARGET_ENTITY>": "the person the question names", "<TIME_RANGE>": "2015-2020"}`.
+     Do NOT just echo the placeholder token as its own value — that adds
+     nothing over input_schema.
 
 7b. Placeholder Invariant (Q1.13 fix — Hard):
     Every `<PLACEHOLDER>` token used anywhere in the macro
@@ -169,8 +173,8 @@ X. Strict JSON Syntax (Hard):
       "description": "the fact or number the macro retrieves"
     },
     "test_invocation": {
-      "<TARGET_ENTITY>": "<TARGET_ENTITY>",
-      "<TIME_RANGE>": "<TIME_RANGE>"
+      "<TARGET_ENTITY>": "the person the question names",
+      "<TIME_RANGE>": "2015-2020"
     },
 
     "assumptions": [

@@ -58,3 +58,35 @@ def test_format_memory_unit_retains_applicability_and_provenance():
     assert "Apply when: persistent state changes" in rendered
     assert "Avoid when: read-only operations" in rendered
     assert "Source: How should state be persisted?" in rendered
+
+
+def test_insight_failure_pattern_normalizes_to_controlled_vocabulary():
+    from automem.memory_schema import (
+        INSIGHT_FAILURE_PATTERNS,
+        normalize_failure_pattern,
+        split_extraction_output,
+    )
+
+    assert normalize_failure_pattern(" Wrong Entity ") == "wrong_entity"
+    assert normalize_failure_pattern("tool-misuse") == "tool_misuse"
+    assert normalize_failure_pattern("") == ""
+    # Off-vocabulary values survive (information beats silence) but normalized.
+    assert normalize_failure_pattern("Made Up Label") == "made_up_label"
+    assert "made_up_label" not in INSIGHT_FAILURE_PATTERNS
+
+    units = split_extraction_output(
+        extraction_result={
+            "failure_pattern": "Disambiguation Error",
+            "root_cause_conclusion": "Committed to one candidate without cross-checking.",
+            "corrective_strategy": "Cross-check candidates against an authoritative index.",
+            "applicability": "queries with same-name candidates",
+            "confidence_calibration": "medium",
+        },
+        unit_type=MemoryUnitType.INSIGHT,
+        source_task_id="task-norm",
+        source_task_query="who wrote it",
+        task_outcome="failure",
+    )
+    assert len(units) == 1
+    assert units[0].content["failure_pattern"] == "disambiguation_error"
+    assert units[0].is_negative_example

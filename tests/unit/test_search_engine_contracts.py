@@ -114,7 +114,11 @@ def test_search_and_diagnosis_prompts_expose_the_subset_encode_schema():
     assert '"extract_types": ["tip", "shortcut"]' in search_prompt
     assert "SAME backend" in search_prompt
     assert "non-empty subset of these five" in diagnosis_prompt
-    assert "exactly one of these five" not in diagnosis_prompt
+    # Guard against ANY single-encode phrasing resurfacing (the 2026-07-14
+    # audit found "exactly one value" / "Exactly one valid extract type"
+    # leftovers that the narrower phrase check above missed).
+    assert "exactly one" not in diagnosis_prompt.lower()
+    assert "[tip] → [tip, trajectory]" in diagnosis_prompt
     assert "ONE common backend" in diagnosis_prompt
     assert "{tip,workflow}" not in differential_prompt
     with pytest.raises(FileNotFoundError):

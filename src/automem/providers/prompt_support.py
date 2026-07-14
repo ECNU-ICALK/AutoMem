@@ -29,15 +29,15 @@ PROMPT_TO_UNIT_TYPE = {
     "shortcut": MemoryUnitType.SHORTCUT,
 }
 
+# Exactly the five public Encode choices. Auxiliary extraction prompts
+# (entity/relation/planning) were removed 2026-07-14: they had no call path —
+# graph stores run their own embedded extraction prompts.
 PROMPT_FILE_NAMES = {
     "insight": "insights_prompt.txt",
     "tip": "tips_prompt.txt",
     "trajectory": "trajectory_prompt.txt",
     "workflow": "workflow_prompt.txt",
     "shortcut": "shortcut_prompt.txt",
-    "entity_extraction": "entity_extraction_prompt.txt",
-    "relation_extraction": "relation_extraction_prompt.txt",
-    "extraction_planning": "extraction_planning_prompt.txt",
 }
 
 

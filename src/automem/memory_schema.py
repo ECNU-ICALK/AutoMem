@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional
 
 import hashlib
 import json
+import re
 import uuid
 
 import numpy as np
@@ -681,6 +682,38 @@ def _compute_initial_confidence(content: Dict[str, Any], unit_type: "MemoryUnitT
     return max(0.05, min(1.0, conf))
 
 
+# Controlled failure-pattern vocabulary — keep in sync with the table in
+# prompts/insights_prompt.txt §4.1(a). The tag feeds graph failure_pattern
+# nodes and the tag retriever's risk_pattern matching, so uncontrolled
+# variants (case/spacing/invented labels) dilute retrieval.
+INSIGHT_FAILURE_PATTERNS = frozenset({
+    "wrong_entity", "wrong_value", "format_error", "incomplete_search",
+    "tool_misuse", "logic_error", "hallucination", "timeout",
+    "scope_error", "disambiguation_error", "file_parse_error",
+    "multimodal_failure",
+})
+
+
+def normalize_failure_pattern(raw: Any, *, task_id: str = "") -> str:
+    """Normalize an insight failure_pattern tag to the controlled vocabulary.
+
+    Case/whitespace/hyphen variants collapse to the canonical form. Values
+    outside the vocabulary are kept (information beats silence) but logged so
+    diagnosis surfaces the drift.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    normalized = re.sub(r"[\s\-]+", "_", text.lower())
+    if normalized not in INSIGHT_FAILURE_PATTERNS:
+        _split_logger.warning(
+            "split_extraction_output: failure_pattern %r is outside the "
+            "controlled vocabulary (task_id=%s); keeping normalized raw value",
+            normalized, task_id,
+        )
+    return normalized
+
+
 def split_extraction_output(
     extraction_result: Dict[str, Any],
     unit_type: MemoryUnitType,
@@ -788,7 +821,12 @@ def split_extraction_output(
 
     else:
         # INSIGHT, WORKFLOW — already atomic
-        u = MemoryUnit(type=unit_type, content=dict(extraction_result), **common)
+        content = dict(extraction_result)
+        if unit_type == MemoryUnitType.INSIGHT and "failure_pattern" in content:
+            content["failure_pattern"] = normalize_failure_pattern(
+                content.get("failure_pattern"), task_id=str(source_task_id)
+            )
+        u = MemoryUnit(type=unit_type, content=content, **common)
         # W2 provenance: INSIGHT is by definition a failure-mode lesson.
         # Mark explicitly so the injection layer renders it as 'past
         # failure to avoid' rather than 'past success to imitate'.

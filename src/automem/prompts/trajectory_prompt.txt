@@ -38,6 +38,9 @@ You do not reflect, speculate, or derive conclusions. Record only what was done 
    - Remove empty filler ("Nothing happens", "Waiting", repeated no-op).
 
 4. Atomic Steps: each step is a single atomic action with its immediate observation. If one action yields multiple observations, keep only the most decision-relevant one.
+   Example: a crawl returns a 10-row table but only the row matching the
+   question's metric matters — record that one row ("row 'Population
+   (2020)': value cell present"), not the whole table.
 
 5. Strict Indexing: chronological, step_id = 0, 1, 2, …
 
@@ -61,8 +64,9 @@ You do not reflect, speculate, or derive conclusions. Record only what was done 
      include the literal file path.
    - `observation`: raw returned data or error text only. ≤ 40 words.
      Include exact error codes/names (e.g., "HTTP 429", "KeyError",
-     "No relevant information"); for table-cell observations the limit
-     may be relaxed to fit the row, but stay terse.
+     "No relevant information"). For table-cell observations you may
+     instead keep ONE full row, hard-capped at 120 characters and
+     JSON-escaped per rule 7b — never multiple rows.
 
 7b. JSON Robustness (Q1.10 fix — Hard):
     Raw crawl/table/error outputs often contain quotes, backslashes,
@@ -172,7 +176,7 @@ X. Strict JSON Syntax (Hard):
     {
       "step_id": 0,
       "action": "tool_name(compressed_args) — ≤30 words",
-      "observation": "raw returned data or error text — ≤20 words"
+      "observation": "raw returned data or error text — ≤40 words (or one table row ≤120 chars)"
     }
   ],
   "key_decision": "one transferable sentence about pivotal choice (≤30 words, role-level nouns ONLY — no <PLACEHOLDERS>, no specific entity/value)",

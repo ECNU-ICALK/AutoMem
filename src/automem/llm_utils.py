@@ -266,8 +266,8 @@ def call_llm_text(
 ) -> str:
     """Same workflow as :func:`call_llm_json` but returns the raw text.
 
-    Useful for prompts (e.g. prompt_rewriter) whose output is plain text
-    rather than structured JSON.
+    Useful for prompts whose output is plain text rather than structured JSON
+    (e.g. the HyDE hypothesis generator).
 
     Retries up to *max_retries* times if the model returns an empty string.
 

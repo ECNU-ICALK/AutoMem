@@ -87,16 +87,35 @@ You output **no executable code**, **no low-level commands**, and **no answer va
      evidence validation). 1–4 steps.
    - If the trajectory contains fewer than 2 distinct search/crawl ops,
      `search_workflow` may be `[]`.
+   - Split rule: if a step DECIDES what to do next (pivot, fallback,
+     compute, format check), it belongs to `agent_workflow`; if it
+     FORMULATES or VALIDATES a query/evidence, it belongs to
+     `search_workflow`. The same trajectory event may contribute to both
+     tracks at different granularity.
+     Worked example (medium web task):
+       agent_workflow: 1) web_search the role-level entity → 2) on
+       paywall, pivot to an open-access mirror → 3) extract the target
+       metric cell → 4) verify unit before final_answer.
+       search_workflow: 1) query_formulation "entity + metric keyword +
+       year qualifier", validation "landing page is a primary source";
+       2) query_formulation "same entity, 'open access' qualifier",
+       validation "cell row label exactly matches the asked metric".
 
 6. Field Brevity (Hard):
-   - `action`: ≤ 15 words.
+   - `action`: ≤ 20 words.
    - `rationale`: ≤ 20 words.
    - `generalized_execution`: ≤ 25 words (archive-only; may contain `<PLACEHOLDERS>`).
    - `query_formulation`: ≤ 20 words.
    - `validation_criteria`: ≤ 20 words.
 
 7. Evidence & Validation:
-   - Each search step must include explicit `validation_criteria` — what counts as verified evidence.
+   - Each search step must include explicit `validation_criteria` — a
+     CHECKABLE rule for what counts as verified evidence, e.g.:
+     "cell row label exactly matches the asked metric", "page is a
+     primary source (official registry/publisher), not an aggregator",
+     "two independent sources agree on the value", "date on the page
+     falls inside the asked time range". Never vague forms like
+     "information looks correct".
 
 8. Forbidden Content (Hard - triggers rejection):
    - The literal task-answer value (the specific number / date / name
@@ -154,7 +173,7 @@ X. Strict JSON Syntax (Hard):
   "agent_workflow": [
     {
       "step": 1,
-      "action": "concrete tool + concrete verb pattern (≤15 words, no <PLACEHOLDERS>, no answer values)",
+      "action": "concrete tool + concrete verb pattern (≤20 words, no <PLACEHOLDERS>, no answer values)",
       "rationale": "decision criterion (≤20 words)",
       "generalized_execution": "archive-only: <PLACEHOLDERS> allowed (≤25 words)"
     }

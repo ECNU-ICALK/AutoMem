@@ -62,7 +62,7 @@ Output JSON in this exact shape:
   "key_change": "<concise architecture-space delta string>",
   "impact_attribution": "<1-2 sentence quantitative explanation of why this change moved accuracy>",
   "secondary_factors": [
-    "<other architectural difference + its observed effect>",
+    "<ONE architectural difference per array item, self-contained: name the delta AND its observed effect with a number — e.g. 'store hybrid→json: hit_rate −0.12'>",
     ...
   ],
   "recommendation_for_next_round": "<concrete actionable architecture proposal phrased as 'try X' or 'extend Y by Z'>",
